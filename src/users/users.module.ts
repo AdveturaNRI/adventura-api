@@ -1,0 +1,24 @@
+import { Module, forwardRef } from '@nestjs/common';
+
+import { AuthModule } from '../auth/auth.module';
+import { ChatsModule } from '../chats/chats.module';
+import { ImageModule } from '../image/image.module';
+import { MediaModule } from '../media/media.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { UsersController } from './users.controller';
+import { UserGameSystemsService } from './user-game-systems.service';
+import { UsersService } from './users.service';
+
+@Module({
+  imports: [
+    AuthModule,
+    MediaModule,
+    ImageModule,
+    NotificationsModule,
+    forwardRef(() => ChatsModule),
+  ],
+  controllers: [UsersController],
+  providers: [UsersService, UserGameSystemsService],
+  exports: [UsersService, UserGameSystemsService],
+})
+export class UsersModule {}

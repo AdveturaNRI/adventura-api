@@ -1,0 +1,434 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String           @id @default(cuid())
+  email           String           @unique
+  nickname        String           @unique
+  passwordHash    String
+  isGuest         Boolean          @default(false)
+  availability    String?
+  age             Int?
+  location        String?
+  cityId          String?
+  timezone        String           @default("Europe/Moscow")
+  playsOnline     Boolean          @default(false)
+  isPublic        Boolean          @default(true)
+  systems         String[]         @default([])
+  readyToLearnNew Boolean          @default(false)
+  openToAnySystem Boolean          @default(false)
+  about           String?
+  description     String?
+  roles           String[]         @default([])
+  questionnaireStep Int            @default(0)
+  lastSeenAt        DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  refreshTokens   RefreshToken[]
+  statuses        UserStatus[]
+  experiences     UserExperience[]
+  city            City?            @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  gameSystems     UserGameSystem[]
+  wandererReactionsGiven    WandererReaction[] @relation("WandererReactionsGiven")
+  wandererReactionsReceived WandererReaction[] @relation("WandererReactionsReceived")
+  conversationsAsLow        Conversation[]     @relation("ConversationUserLow")
+  conversationsAsHigh       Conversation[]     @relation("ConversationUserHigh")
+  conversationReads         ConversationRead[]
+  conversationParticipants  ConversationParticipant[]
+  messagesSent              Message[]
+  notificationsReceived     Notification[]     @relation("NotificationsReceived")
+  notificationsActed        Notification[]     @relation("NotificationsActed")
+  blocksGiven               UserBlock[]        @relation("BlocksGiven")
+  blocksReceived            UserBlock[]        @relation("BlocksReceived")
+  gamesOwned                Game[]
+  clubsOwned                Club[]
+  gameApplications          GameApplication[]
+  gamePlayers               GamePlayer[]
+}
+
+model Status {
+  id        String       @id @default(cuid())
+  name      String       @unique
+  sortOrder Int          @default(0)
+  createdAt DateTime     @default(now())
+  users     UserStatus[]
+
+  @@map("statuses")
+}
+
+model UserStatus {
+  userId    String
+  statusId  String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    Status   @relation(fields: [statusId], references: [id], onDelete: Cascade)
+
+  @@id([userId, statusId])
+  @@map("user_statuses")
+}
+
+model ExperienceType {
+  id        String           @id @default(cuid())
+  name      String           @unique
+  sortOrder Int              @default(0)
+  createdAt DateTime         @default(now())
+  users     UserExperience[]
+  games     Game[]
+
+  @@map("experience_types")
+}
+
+model GameSystem {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  sortOrder   Int      @default(0)
+  isOfficial  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@map("game_systems")
+}
+
+model UserGameSystem {
+  id             String   @id @default(cuid())
+  userId         String
+  name           String
+  normalizedName String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  games          Game[]
+
+  @@unique([userId, normalizedName])
+  @@index([userId])
+  @@map("user_game_systems")
+}
+
+enum GameKind {
+  ONESHOT
+  CAMPAIGN
+}
+
+enum GameStatus {
+  RECRUITING
+  CLOSED
+  FINISHED
+}
+
+enum GameApplicationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+model Game {
+  id               String             @id @default(cuid())
+  ownerId          String
+  owner            User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  userGameSystemId String
+  userGameSystem   UserGameSystem     @relation(fields: [userGameSystemId], references: [id], onDelete: Restrict)
+  title            String
+  description      String?
+  maxPlayers       Int
+  durationHours    Int?
+  kind             GameKind           @default(ONESHOT)
+  status           GameStatus         @default(RECRUITING)
+  isOnline         Boolean            @default(false)
+  cityId           String?
+  city             City?              @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  scheduledAt      DateTime?
+  timezone         String             @default("Europe/Moscow")
+  priceRub         Int?
+  experienceTypeId String?
+  experienceType   ExperienceType?    @relation(fields: [experienceTypeId], references: [id], onDelete: SetNull)
+  beginnersWelcome Boolean            @default(false)
+  minAge           Int?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  applications     GameApplication[]
+  players          GamePlayer[]
+  conversation     Conversation?
+
+  @@index([ownerId])
+  @@index([userGameSystemId])
+  @@index([cityId])
+  @@index([scheduledAt])
+  @@index([status])
+  @@map("games")
+}
+
+model GameApplication {
+  id        String                @id @default(cuid())
+  gameId    String
+  game      Game                  @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    GameApplicationStatus @default(PENDING)
+  message   String?
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+
+  @@unique([gameId, userId])
+  @@index([gameId, status])
+  @@index([userId])
+  @@map("game_applications")
+}
+
+model GamePlayer {
+  id       String   @id @default(cuid())
+  gameId   String
+  game     Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt DateTime @default(now())
+
+  @@unique([gameId, userId])
+  @@index([gameId])
+  @@index([userId])
+  @@map("game_players")
+}
+
+model UserExperience {
+  userId           String
+  experienceTypeId String
+  createdAt        DateTime       @default(now())
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  experienceType   ExperienceType @relation(fields: [experienceTypeId], references: [id], onDelete: Cascade)
+
+  @@id([userId, experienceTypeId])
+  @@map("user_experiences")
+}
+
+model Country {
+  id        String   @id
+  code      String   @unique
+  name      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  cities    City[]
+
+  @@map("countries")
+}
+
+model City {
+  id         String   @id
+  countryId  String
+  name       String
+  region     String?
+  population Int      @default(0)
+  geonameId  Int?     @unique
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  country    Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  users      User[]
+  games      Game[]
+  clubs      Club[]
+
+  @@unique([countryId, name, region])
+  @@index([name])
+  @@index([countryId, population])
+  @@map("cities")
+}
+
+model Club {
+  id          String   @id @default(cuid())
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  address     String
+  lat         Float
+  lng         Float
+  cityId      String?
+  city        City?    @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  /// JSON: [{ day: 1-7, closed, open: "HH:mm"|null, close: "HH:mm"|null }]
+  schedule    Json
+  isPublished Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([ownerId])
+  @@index([cityId])
+  @@index([lat, lng])
+  @@map("clubs")
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Media {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  collection String
+  variant    String
+  mimeType   String
+  path       String
+  width      Int?
+  height     Int?
+  size       Int
+  createdAt  DateTime @default(now())
+
+  @@unique([entityType, entityId, collection, variant])
+  @@index([entityType, entityId, collection])
+}
+
+enum WandererReactionType {
+  FAVORITE
+  SKIPPED
+}
+
+model WandererReaction {
+  id           String               @id @default(cuid())
+  viewerId     String
+  targetUserId String
+  type         WandererReactionType
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  viewer       User                 @relation("WandererReactionsGiven", fields: [viewerId], references: [id], onDelete: Cascade)
+  target       User                 @relation("WandererReactionsReceived", fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  @@unique([viewerId, targetUserId])
+  @@index([viewerId, type])
+  @@index([targetUserId])
+  @@map("wanderer_reactions")
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+enum ConversationParticipantRole {
+  OWNER
+  MEMBER
+}
+
+model Conversation {
+  id            String                     @id @default(cuid())
+  type          ConversationType           @default(DIRECT)
+  title         String?
+  gameId        String?                    @unique
+  userLowId     String?
+  userHighId    String?
+  lastMessageAt DateTime?
+  createdAt     DateTime                   @default(now())
+  updatedAt     DateTime                   @updatedAt
+  game          Game?                      @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  userLow       User?                      @relation("ConversationUserLow", fields: [userLowId], references: [id], onDelete: Cascade)
+  userHigh      User?                      @relation("ConversationUserHigh", fields: [userHighId], references: [id], onDelete: Cascade)
+  messages      Message[]
+  reads         ConversationRead[]
+  participants  ConversationParticipant[]
+
+  @@unique([userLowId, userHighId])
+  @@index([lastMessageAt])
+  @@index([type])
+  @@map("conversations")
+}
+
+model ConversationParticipant {
+  conversationId String
+  userId         String
+  role           ConversationParticipantRole @default(MEMBER)
+  joinedAt       DateTime                    @default(now())
+  conversation   Conversation                @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@index([userId])
+  @@map("conversation_participants")
+}
+
+model ConversationRead {
+  conversationId String
+  userId         String
+  lastReadAt     DateTime     @default(now())
+  hiddenAt       DateTime?
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@index([userId])
+  @@map("conversation_reads")
+}
+
+enum MessageKind {
+  USER
+  FAVORITE_RECEIVED
+  FAVORITE_REMOVED
+  USER_BLOCKED
+  USER_UNBLOCKED
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  senderId       String
+  body           String?
+  attachmentName String?
+  kind           MessageKind  @default(USER)
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@map("messages")
+}
+
+enum NotificationType {
+  FAVORITE_RECEIVED
+  FAVORITE_RETURNED
+  GAME_APPLICATION
+  GAME_APPLICATION_ACCEPTED
+  GAME_APPLICATION_REJECTED
+  GAME_PLAYER_REMOVED
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  actorId   String
+  type      NotificationType
+  subject   String           @default("")
+  refId     String           @default("")
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  user      User             @relation("NotificationsReceived", fields: [userId], references: [id], onDelete: Cascade)
+  actor     User             @relation("NotificationsActed", fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type, actorId, refId])
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+model UserBlock {
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+  blocker   User     @relation("BlocksGiven", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked   User     @relation("BlocksReceived", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+  @@map("user_blocks")
+}

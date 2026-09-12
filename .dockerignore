@@ -1,0 +1,14 @@
+node_modules
+dist
+.env
+.env.*
+coverage
+.DS_Store
+uploads
+.adminjs
+.claude
+prisma/data/geonames
+*.log
+.git
+README.md
+test
