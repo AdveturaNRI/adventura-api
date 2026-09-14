@@ -115,16 +115,6 @@ export class GamesController {
     return this.gamesService.removePlayer(user.id, id, userId);
   }
 
-
-  @Delete(':id')
-  remove(
-    @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
-    @Body() dto: DeleteGameDto,
-  ) {
-    return this.gamesService.remove(user.id, id, dto);
-  }
-
   @Post(':id/cover')
   @UseInterceptors(
     FileInterceptor('cover', {
@@ -143,5 +133,14 @@ export class GamesController {
   @Delete(':id/cover')
   deleteCover(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.gamesService.deleteCover(user.id, id);
+  }
+
+  @Delete(':id')
+  remove(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: DeleteGameDto,
+  ) {
+    return this.gamesService.remove(user.id, id, dto);
   }
 }
