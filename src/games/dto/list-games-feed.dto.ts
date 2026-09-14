@@ -61,6 +61,12 @@ export class ListGamesFeedQueryDto {
   @MaxLength(64)
   cityId?: string;
 
+  /** Comma-separated city ids; offline games matching any of them. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(220)
+  cityIds?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(80)

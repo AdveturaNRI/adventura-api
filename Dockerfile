@@ -18,7 +18,6 @@ COPY prisma ./prisma
 RUN npm ci --omit=dev && npx prisma generate
 COPY --from=build /app/dist ./dist
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/adventura-entrypoint
-RUN mkdir -p uploads
 EXPOSE 3000
 ENTRYPOINT ["/usr/local/bin/adventura-entrypoint"]
 CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main"]

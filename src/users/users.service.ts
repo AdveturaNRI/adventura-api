@@ -77,6 +77,25 @@ const USER_PROFILE_SELECT = {
       },
     },
   },
+  userCities: {
+    orderBy: { sortOrder: 'asc' },
+    select: {
+      sortOrder: true,
+      city: {
+        select: {
+          id: true,
+          name: true,
+          region: true,
+          country: {
+            select: {
+              code: true,
+              name: true,
+            },
+          },
+        },
+      },
+    },
+  },
 } as const;
 
 const AVATAR_COLLECTION = 'avatar';
@@ -112,6 +131,15 @@ type UserWithRelations = {
     region: string | null;
     country: { code: string; name: string };
   } | null;
+  userCities: {
+    sortOrder: number;
+    city: {
+      id: string;
+      name: string;
+      region: string | null;
+      country: { code: string; name: string };
+    };
+  }[];
 };
 
 @Injectable()
@@ -573,19 +601,64 @@ export class UsersService {
           location: string | null;
         }
       | undefined;
+    let cityIdsToSync: string[] | undefined;
 
-    if (dto.cityId !== undefined) {
+    if (dto.cityIds !== undefined) {
+      const uniqueIds = [...new Set(dto.cityIds.map((id) => id.trim()).filter(Boolean))];
+
+      if (uniqueIds.length > 3) {
+        throw new BadRequestException('Можно указать не больше 3 городов');
+      }
+
+      const cities = uniqueIds.length
+        ? await this.prisma.city.findMany({
+            where: { id: { in: uniqueIds }, isActive: true },
+            select: { id: true, name: true },
+          })
+        : [];
+
+      if (cities.length !== uniqueIds.length) {
+        throw new BadRequestException('Один или несколько городов не найдены');
+      }
+
+      const cityById = new Map(cities.map((city) => [city.id, city]));
+      const ordered = uniqueIds
+        .map((id) => cityById.get(id))
+        .filter((city): city is { id: string; name: string } => Boolean(city));
+
+      cityIdsToSync = ordered.map((city) => city.id);
+      cityUpdate = {
+        cityId: ordered[0]?.id ?? null,
+        location: ordered.map((city) => city.name).join(' · ') || null,
+      };
+    } else if (dto.cityId !== undefined) {
       if (dto.cityId === null) {
+        cityIdsToSync = [];
         cityUpdate = {
           cityId: null,
           location: null,
         };
       } else {
         const city = await this.getActiveCity(dto.cityId);
+        cityIdsToSync = [city.id];
         cityUpdate = {
           cityId: city.id,
           location: city.name,
         };
+      }
+    }
+
+    if (cityIdsToSync !== undefined) {
+      await this.prisma.userCity.deleteMany({ where: { userId } });
+
+      if (cityIdsToSync.length > 0) {
+        await this.prisma.userCity.createMany({
+          data: cityIdsToSync.map((cityId, index) => ({
+            userId,
+            cityId,
+            sortOrder: index,
+          })),
+        });
       }
     }
 
@@ -740,6 +813,9 @@ export class UsersService {
         experiences: {
           deleteMany: {},
         },
+        userCities: {
+          deleteMany: {},
+        },
       },
       select: USER_PROFILE_SELECT,
     });
@@ -820,11 +896,38 @@ export class UsersService {
   }
 
   private async touchUserMediaUpdatedAt(userId: string) {
-    // Путь файла тот же (/uploads/.../card.webp) — без смены updatedAt клиентский кеш не сбрасывается
+    // Object key stays the same — bump updatedAt so client cache refreshes
+
     await this.prisma.user.update({
       where: { id: userId },
       data: { updatedAt: new Date() },
     });
+  }
+
+  private mapProfileCities(user: UserWithRelations): UserProfile['cities'] {
+    if (user.userCities.length > 0) {
+      return user.userCities.map((item) => ({
+        id: item.city.id,
+        name: item.city.name,
+        region: item.city.region,
+        countryCode: item.city.country.code,
+        countryName: item.city.country.name,
+      }));
+    }
+
+    if (user.city) {
+      return [
+        {
+          id: user.city.id,
+          name: user.city.name,
+          region: user.city.region,
+          countryCode: user.city.country.code,
+          countryName: user.city.country.name,
+        },
+      ];
+    }
+
+    return [];
   }
 
   private async toProfile(user: UserWithRelations): Promise<UserProfile> {
@@ -840,9 +943,10 @@ export class UsersService {
       collection: PROFILE_CARD_COLLECTION,
     });
 
-    const avatarUrls = this.mediaService.getCollectionUrls(avatarMedia);
-    const profileCardUrls = this.mediaService.getCollectionUrls(profileCardMedia);
+    const avatarUrls = await this.mediaService.getCollectionUrls(avatarMedia);
+    const profileCardUrls = await this.mediaService.getCollectionUrls(profileCardMedia);
     const hasProfileCard = Object.keys(profileCardUrls).length > 0;
+    const cities = this.mapProfileCities(user);
 
     return {
       id: user.id,
@@ -853,16 +957,10 @@ export class UsersService {
       experienceTypes: user.experiences.map((item) => item.experienceType),
       availability: user.availability,
       age: user.age,
-      city: user.city
-        ? {
-            id: user.city.id,
-            name: user.city.name,
-            region: user.city.region,
-            countryCode: user.city.country.code,
-            countryName: user.city.country.name,
-          }
-        : null,
-      location: user.city?.name ?? user.location,
+      city: cities[0] ?? null,
+      cities,
+      location:
+        cities.length > 0 ? cities.map((city) => city.name).join(' · ') : user.location,
       playsOnline: user.playsOnline,
       timezone: user.timezone || 'Europe/Moscow',
       isPublic: user.isPublic,
@@ -892,13 +990,16 @@ export class UsersService {
       entityId: user.id,
       collection: PROFILE_CARD_COLLECTION,
     });
-    const profileCardUrls = this.mediaService.getCollectionUrls(profileCardMedia);
+    const profileCardUrls = await this.mediaService.getCollectionUrls(profileCardMedia);
     const hasProfileCard = Object.keys(profileCardUrls).length > 0;
     const completionInput = buildQuestionnaireCompletionInput(user, hasProfileCard);
 
     if (!options?.includeIncomplete && !isEligibleForWanderersFeed(completionInput)) {
       return null;
     }
+
+    const cities = this.mapProfileCities(user);
+    const cityNames = cities.map((city) => city.name);
 
     return {
       id: user.id,
@@ -913,7 +1014,8 @@ export class UsersService {
       openToAnySystem: user.openToAnySystem,
       about: user.description ?? user.about,
       description: user.description,
-      location: user.city?.name ?? user.location,
+      location: cityNames.length > 0 ? cityNames.join(' · ') : user.location,
+      cities: cityNames,
       playsOnline: user.playsOnline,
       experienceLabel: user.experiences[0]?.experienceType.name ?? null,
       profileCard: hasProfileCard ? profileCardUrls : null,

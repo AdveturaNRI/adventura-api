@@ -1626,12 +1626,12 @@ export class ChatsService {
 
     const primary = media[0];
     const kind = attachmentKindFromMime(primary.mimeType);
-    const urls = this.mediaService.getCollectionUrls(media);
+    const urls = await this.mediaService.getCollectionUrls(media);
     const image = kind === 'image' && Object.keys(urls).length > 0 ? urls : null;
     const fileUrl =
       kind === 'image'
         ? urls.original ?? urls.large ?? urls.medium ?? urls.thumb ?? null
-        : this.mediaService.getPublicUrl(primary);
+        : await this.mediaService.getPublicUrl(primary);
 
     return {
       id: message.id,
@@ -1674,7 +1674,7 @@ export class ChatsService {
       entityId: userId,
       collection: 'avatar',
     });
-    const urls = this.mediaService.getCollectionUrls(media);
+    const urls = await this.mediaService.getCollectionUrls(media);
     return urls.thumb ?? urls.small ?? urls.medium ?? urls.large ?? null;
   }
 }

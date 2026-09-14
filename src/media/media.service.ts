@@ -1,11 +1,8 @@
-import { join } from 'path';
-
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Media } from '@prisma/client';
-import { promises as fs } from 'fs';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { S3Service } from '../storage/s3.service';
 import type { ImageUrls, ProcessedImageVariant } from '../image/image.types';
 
 export type MediaEntityRef = {
@@ -16,21 +13,10 @@ export type MediaEntityRef = {
 
 @Injectable()
 export class MediaService {
-  private readonly uploadsRoot: string;
-  private readonly publicBaseUrl: string;
-
   constructor(
     private readonly prisma: PrismaService,
-    configService: ConfigService,
-  ) {
-    this.uploadsRoot = configService.get<string>(
-      'UPLOADS_DIR',
-      join(process.cwd(), 'uploads'),
-    );
-    this.publicBaseUrl = configService
-      .get<string>('PUBLIC_URL', 'http://localhost:3000')
-      .replace(/\/$/, '');
-  }
+    private readonly s3: S3Service,
+  ) {}
 
   async replaceCollection(
     entity: MediaEntityRef,
@@ -41,15 +27,12 @@ export class MediaService {
     const saved: Media[] = [];
 
     for (const variant of variants) {
-      const relativePath = this.buildRelativePath(
-        entity,
-        variant.variant,
-        variant.mimeType,
-      );
-      const absolutePath = join(this.uploadsRoot, relativePath);
-
-      await fs.mkdir(join(absolutePath, '..'), { recursive: true });
-      await fs.writeFile(absolutePath, variant.buffer);
+      const key = this.buildObjectKey(entity, variant.variant, variant.mimeType);
+      await this.s3.putObject({
+        key,
+        body: variant.buffer,
+        contentType: variant.mimeType,
+      });
 
       const media = await this.prisma.media.create({
         data: {
@@ -58,7 +41,7 @@ export class MediaService {
           collection: entity.collection,
           variant: variant.variant,
           mimeType: variant.mimeType,
-          path: relativePath,
+          path: key,
           width: variant.width,
           height: variant.height,
           size: variant.size,
@@ -81,16 +64,18 @@ export class MediaService {
 
     const variant = options?.variant ?? 'file';
     const extension = extensionFromMime(mimeType, options?.fileName);
-    const relativePath = join(
+    const key = [
       entity.entityType.toLowerCase(),
       entity.entityId,
       entity.collection,
       `${variant}.${extension}`,
-    );
-    const absolutePath = join(this.uploadsRoot, relativePath);
+    ].join('/');
 
-    await fs.mkdir(join(absolutePath, '..'), { recursive: true });
-    await fs.writeFile(absolutePath, buffer);
+    await this.s3.putObject({
+      key,
+      body: buffer,
+      contentType: mimeType,
+    });
 
     return this.prisma.media.create({
       data: {
@@ -99,7 +84,7 @@ export class MediaService {
         collection: entity.collection,
         variant,
         mimeType,
-        path: relativePath,
+        path: key,
         width: null,
         height: null,
         size: buffer.length,
@@ -118,26 +103,30 @@ export class MediaService {
     });
   }
 
-  getCollectionUrls(media: Media[]): ImageUrls {
-    return media.reduce<ImageUrls>((urls, item) => {
-      urls[item.variant as keyof ImageUrls] = this.toPublicUrl(item.path);
+  async getCollectionUrls(media: Media[]): Promise<ImageUrls> {
+    const entries = await Promise.all(
+      media.map(async (item) => {
+        const url = await this.s3.getSignedObjectUrl(item.path);
+        return [item.variant, url] as const;
+      }),
+    );
+
+    return entries.reduce<ImageUrls>((urls, [variant, url]) => {
+      urls[variant as keyof ImageUrls] = url;
       return urls;
     }, {});
   }
 
-  getPublicUrl(media: Media): string {
-    return this.toPublicUrl(media.path);
+  async getPublicUrl(media: Media): Promise<string> {
+    return this.s3.getSignedObjectUrl(media.path);
   }
 
   async deleteCollection(entity: MediaEntityRef): Promise<void> {
     const existing = await this.getCollection(entity);
 
-    await Promise.all(
-      existing.map(async (item) => {
-        const absolutePath = join(this.uploadsRoot, item.path);
-        await fs.unlink(absolutePath).catch(() => undefined);
-      }),
-    );
+    if (existing.length > 0) {
+      await this.s3.deleteObjects(existing.map((item) => item.path));
+    }
 
     await this.prisma.media.deleteMany({
       where: {
@@ -148,22 +137,18 @@ export class MediaService {
     });
   }
 
-  private buildRelativePath(
+  private buildObjectKey(
     entity: MediaEntityRef,
     variant: string,
     mimeType: string,
   ): string {
     const extension = mimeType === 'image/webp' ? 'webp' : 'bin';
-    return join(
+    return [
       entity.entityType.toLowerCase(),
       entity.entityId,
       entity.collection,
       `${variant}.${extension}`,
-    );
-  }
-
-  private toPublicUrl(relativePath: string): string {
-    return `${this.publicBaseUrl}/uploads/${relativePath.replace(/\\/g, '/')}`;
+    ].join('/');
   }
 }
 

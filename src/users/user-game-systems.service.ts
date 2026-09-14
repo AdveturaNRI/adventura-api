@@ -327,7 +327,7 @@ export class UserGameSystemsService {
       entityId: userId,
       collection: AVATAR_COLLECTION,
     });
-    const avatarUrls = this.mediaService.getCollectionUrls(avatarMedia);
+    const avatarUrls = await this.mediaService.getCollectionUrls(avatarMedia);
     const avatarUrl =
       avatarUrls.small ?? avatarUrls.thumb ?? avatarUrls.medium ?? avatarUrls.large ?? null;
 

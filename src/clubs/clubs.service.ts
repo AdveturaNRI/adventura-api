@@ -832,7 +832,7 @@ export class ClubsService {
       entityId: club.id,
       collection: COVER_COLLECTION,
     });
-    const coverUrls = this.mediaService.getCollectionUrls(coverMedia);
+    const coverUrls = await this.mediaService.getCollectionUrls(coverMedia);
 
     const galleryUrls: string[] = [];
     for (let index = 0; index < MAX_GALLERY; index += 1) {
@@ -844,7 +844,7 @@ export class ClubsService {
       if (!media.length) {
         break;
       }
-      const urls = this.mediaService.getCollectionUrls(media);
+      const urls = await this.mediaService.getCollectionUrls(media);
       galleryUrls.push(urls.card || urls.original || urls.cardThumb || '');
     }
 

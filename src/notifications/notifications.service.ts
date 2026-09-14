@@ -438,7 +438,7 @@ export class NotificationsService {
       entityId: userId,
       collection: 'avatar',
     });
-    const urls = this.mediaService.getCollectionUrls(media);
+    const urls = await this.mediaService.getCollectionUrls(media);
     return urls.thumb ?? urls.small ?? urls.medium ?? urls.large ?? null;
   }
 }
