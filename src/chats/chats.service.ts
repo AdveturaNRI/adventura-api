@@ -19,7 +19,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeEmitter } from '../realtime/realtime.emitter';
 
 const MESSAGE_ATTACHMENT_COLLECTION = 'attachment';
+const MESSAGE_ATTACHMENT_PREFIX = 'attachment-';
 const MESSAGE_IMAGE_VARIANTS = ['thumb', 'medium', 'large', 'original'] as const;
+const MAX_MESSAGE_ATTACHMENTS = 10;
 const MEMBERS_PREVIEW_LIMIT = 3;
 
 export type ChatAttachmentKind = 'image' | 'audio' | 'file';
@@ -73,6 +75,7 @@ export type ChatMessageDto = {
   createdAt: string;
   image: ImageUrls | null;
   attachment: ChatAttachmentDto | null;
+  attachments: ChatAttachmentDto[];
 };
 
 export type ConversationListItem = {
@@ -128,6 +131,25 @@ function attachmentKindFromMime(mimeType: string): ChatAttachmentKind {
     return 'audio';
   }
   return 'file';
+}
+
+function isMessageAttachmentCollection(collection: string): boolean {
+  return (
+    collection === MESSAGE_ATTACHMENT_COLLECTION ||
+    new RegExp(`^${MESSAGE_ATTACHMENT_PREFIX}\\d+$`).test(collection)
+  );
+}
+
+function attachmentCollectionIndex(collection: string): number {
+  if (collection === MESSAGE_ATTACHMENT_COLLECTION) {
+    return 0;
+  }
+  const match = new RegExp(`^${MESSAGE_ATTACHMENT_PREFIX}(\\d+)$`).exec(collection);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+}
+
+function messageAttachmentCollection(index: number): string {
+  return `${MESSAGE_ATTACHMENT_PREFIX}${index}`;
 }
 
 function orderedPair(userA: string, userB: string) {
@@ -966,14 +988,7 @@ export class ChatsService {
 
       let attachmentKind: ChatAttachmentKind | null = null;
       if (last) {
-        const media = await this.mediaService.getCollection({
-          entityType: 'Message',
-          entityId: last.id,
-          collection: MESSAGE_ATTACHMENT_COLLECTION,
-        });
-        if (media.length > 0) {
-          attachmentKind = attachmentKindFromMime(media[0].mimeType);
-        }
+        attachmentKind = await this.getMessageAttachmentKind(last.id);
       }
 
       const lastReadAt = myRead?.lastReadAt;
@@ -1132,7 +1147,7 @@ export class ChatsService {
     userId: string,
     conversationId: string,
     body: string | undefined,
-    file?: Express.Multer.File,
+    files: Express.Multer.File[] = [],
   ) {
     const conversation = await this.assertParticipant(userId, conversationId);
     const participantIds = await this.getParticipantIds(conversationId);
@@ -1151,12 +1166,19 @@ export class ChatsService {
     }
 
     const trimmed = body?.trim() || null;
+    const uploads = files.filter(Boolean);
 
-    if (!trimmed && !file) {
+    if (uploads.length > MAX_MESSAGE_ATTACHMENTS) {
+      throw new BadRequestException(
+        `Можно отправить не более ${MAX_MESSAGE_ATTACHMENTS} файлов за раз`,
+      );
+    }
+
+    if (!trimmed && uploads.length === 0) {
       throw new BadRequestException('Сообщение не может быть пустым');
     }
 
-    const attachmentName = file?.originalname?.trim() || null;
+    const attachmentName = uploads[0]?.originalname?.trim() || null;
     const message = await this.prisma.message.create({
       data: {
         conversationId,
@@ -1166,11 +1188,12 @@ export class ChatsService {
       },
     });
 
-    if (file) {
+    for (let index = 0; index < uploads.length; index += 1) {
+      const file = uploads[index];
       const entity = {
         entityType: 'Message',
         entityId: message.id,
-        collection: MESSAGE_ATTACHMENT_COLLECTION,
+        collection: messageAttachmentCollection(index),
       };
       const kind = attachmentKindFromMime(file.mimetype);
 
@@ -1183,7 +1206,7 @@ export class ChatsService {
         await this.mediaService.replaceCollection(entity, variants);
       } else {
         await this.mediaService.saveRawFile(entity, file.buffer, file.mimetype, {
-          fileName: attachmentName ?? undefined,
+          fileName: file.originalname?.trim() || attachmentName || undefined,
         });
       }
     }
@@ -1426,14 +1449,7 @@ export class ChatsService {
 
     let attachmentKind: ChatAttachmentKind | null = null;
     if (last) {
-      const media = await this.mediaService.getCollection({
-        entityType: 'Message',
-        entityId: last.id,
-        collection: MESSAGE_ATTACHMENT_COLLECTION,
-      });
-      if (media.length > 0) {
-        attachmentKind = attachmentKindFromMime(media[0].mimeType);
-      }
+      attachmentKind = await this.getMessageAttachmentKind(last.id);
     }
 
     const lastMessage = last
@@ -1680,12 +1696,33 @@ export class ChatsService {
       where: { conversationId },
       select: { id: true },
     });
+    const messageIds = messages.map((message) => message.id);
+    if (messageIds.length === 0) {
+      return;
+    }
+
+    const mediaRows = await this.prisma.media.findMany({
+      where: {
+        entityType: 'Message',
+        entityId: { in: messageIds },
+      },
+      select: { entityId: true, collection: true },
+    });
+
+    const uniqueCollections = new Map<string, { entityId: string; collection: string }>();
+    for (const row of mediaRows) {
+      if (!isMessageAttachmentCollection(row.collection)) {
+        continue;
+      }
+      uniqueCollections.set(`${row.entityId}:${row.collection}`, row);
+    }
+
     await Promise.all(
-      messages.map((message) =>
+      [...uniqueCollections.values()].map((row) =>
         this.mediaService.deleteCollection({
           entityType: 'Message',
-          entityId: message.id,
-          collection: MESSAGE_ATTACHMENT_COLLECTION,
+          entityId: row.entityId,
+          collection: row.collection,
         }),
       ),
     );
@@ -1700,6 +1737,71 @@ export class ChatsService {
         });
       }),
     );
+  }
+
+  private async resolveMessageAttachments(
+    messageId: string,
+    attachmentName?: string | null,
+  ): Promise<ChatAttachmentDto[]> {
+    const rows = await this.prisma.media.findMany({
+      where: {
+        entityType: 'Message',
+        entityId: messageId,
+      },
+    });
+
+    const byCollection = new Map<string, typeof rows>();
+    for (const row of rows) {
+      if (!isMessageAttachmentCollection(row.collection)) {
+        continue;
+      }
+      const list = byCollection.get(row.collection) ?? [];
+      list.push(row);
+      byCollection.set(row.collection, list);
+    }
+
+    const collections = [...byCollection.keys()].sort(
+      (a, b) => attachmentCollectionIndex(a) - attachmentCollectionIndex(b),
+    );
+
+    const attachments: ChatAttachmentDto[] = [];
+    for (const [index, collection] of collections.entries()) {
+      const media = byCollection.get(collection) ?? [];
+      if (media.length === 0) {
+        continue;
+      }
+      const primary = media[0];
+      const kind = attachmentKindFromMime(primary.mimeType);
+      const urls = await this.mediaService.getCollectionUrls(media);
+      const image = kind === 'image' && Object.keys(urls).length > 0 ? urls : null;
+      const fileUrl =
+        kind === 'image'
+          ? urls.original ?? urls.large ?? urls.medium ?? urls.thumb ?? null
+          : await this.mediaService.getPublicUrl(primary);
+      const fallbackName =
+        kind === 'image' ? 'Фото' : kind === 'audio' ? 'Аудио' : 'Файл';
+      const name =
+        index === 0 && attachmentName?.trim()
+          ? attachmentName.trim()
+          : fallbackName;
+
+      attachments.push({
+        kind,
+        name,
+        mimeType: primary.mimeType,
+        url: fileUrl,
+        image,
+      });
+    }
+
+    return attachments;
+  }
+
+  private async getMessageAttachmentKind(
+    messageId: string,
+  ): Promise<ChatAttachmentKind | null> {
+    const attachments = await this.resolveMessageAttachments(messageId);
+    return attachments[0]?.kind ?? null;
   }
 
   private async toMessageDto(message: {
@@ -1721,35 +1823,12 @@ export class ChatsService {
       avatarUrl: await this.getAvatarUrl(message.senderId),
     };
 
-    const media = await this.mediaService.getCollection({
-      entityType: 'Message',
-      entityId: message.id,
-      collection: MESSAGE_ATTACHMENT_COLLECTION,
-    });
     const messageKind = toChatMessageKind(message.kind);
-
-    if (media.length === 0) {
-      return {
-        id: message.id,
-        conversationId: message.conversationId,
-        senderId: message.senderId,
-        sender,
-        body: message.body,
-        kind: messageKind,
-        createdAt: message.createdAt.toISOString(),
-        image: null,
-        attachment: null,
-      };
-    }
-
-    const primary = media[0];
-    const kind = attachmentKindFromMime(primary.mimeType);
-    const urls = await this.mediaService.getCollectionUrls(media);
-    const image = kind === 'image' && Object.keys(urls).length > 0 ? urls : null;
-    const fileUrl =
-      kind === 'image'
-        ? urls.original ?? urls.large ?? urls.medium ?? urls.thumb ?? null
-        : await this.mediaService.getPublicUrl(primary);
+    const attachments = await this.resolveMessageAttachments(
+      message.id,
+      message.attachmentName,
+    );
+    const primary = attachments[0] ?? null;
 
     return {
       id: message.id,
@@ -1759,16 +1838,9 @@ export class ChatsService {
       body: message.body,
       kind: messageKind,
       createdAt: message.createdAt.toISOString(),
-      image,
-      attachment: {
-        kind,
-        name:
-          message.attachmentName?.trim() ||
-          (kind === 'image' ? 'Фото' : kind === 'audio' ? 'Аудио' : 'Файл'),
-        mimeType: primary.mimeType,
-        url: fileUrl,
-        image,
-      },
+      image: primary?.image ?? null,
+      attachment: primary,
+      attachments,
     };
   }
 

@@ -6,11 +6,11 @@ import {
   Param,
   Post,
   Query,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -79,18 +79,29 @@ export class ChatsController {
 
   @Post(':id/messages')
   @UseInterceptors(
-    FileInterceptor('file', {
-      storage: memoryStorage(),
-      limits: { fileSize: MAX_UPLOAD_FILE_SIZE_BYTES },
-    }),
+    FileFieldsInterceptor(
+      [
+        { name: 'files', maxCount: 10 },
+        { name: 'file', maxCount: 1 },
+      ],
+      {
+        storage: memoryStorage(),
+        limits: { fileSize: MAX_UPLOAD_FILE_SIZE_BYTES },
+      },
+    ),
   )
   sendMessage(
     @CurrentUser() user: AuthUser,
     @Param('id') conversationId: string,
     @Body() dto: SendMessageDto,
-    @UploadedFile() file?: Express.Multer.File,
+    @UploadedFiles()
+    uploaded?: {
+      files?: Express.Multer.File[];
+      file?: Express.Multer.File[];
+    },
   ) {
-    return this.chatsService.sendMessage(user.id, conversationId, dto.body, file);
+    const files = [...(uploaded?.files ?? []), ...(uploaded?.file ?? [])];
+    return this.chatsService.sendMessage(user.id, conversationId, dto.body, files);
   }
 
   @Post(':id/read')
