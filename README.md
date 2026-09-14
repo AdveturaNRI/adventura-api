@@ -1,3 +1,22 @@
+## Production CI/CD
+
+Pushes to `main` run `.github/workflows/deploy-production.yml`. The workflow
+builds `moskowpsix/adventura-api`, publishes immutable `sha-<commit>` and
+`latest` tags to Docker Hub, then updates only the configured Docker Swarm API
+service by image digest.
+
+Keep the following organisation-level GitHub Actions secrets shared with the
+frontend repository: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `DEPLOY_HOST`,
+`DEPLOY_PORT`, `DEPLOY_USER`, `DEPLOY_PASSWORD`, and `DEPLOY_KNOWN_HOSTS`.
+
+Create only one repository-level secret here:
+
+- `SWARM_SERVICE=adventura_api`
+
+The workflow deliberately does not run Prisma migrations. In the production
+stack, `adventura_migrate` is a separate task; run and verify that task before
+deploying an API version that depends on a schema migration.
+
 <p align="center">
   <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
 </p>
