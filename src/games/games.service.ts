@@ -178,11 +178,21 @@ export class GamesService {
 
     if (typeof query.isOnline === 'boolean') {
       where.isOnline = query.isOnline;
-      if (query.isOnline === false && query.cityId?.trim()) {
-        where.cityId = query.cityId.trim();
+      if (query.isOnline === false) {
+        const cityIds = this.parseCityIdsFilter(query.cityIds, query.cityId);
+        if (cityIds.length === 1) {
+          where.cityId = cityIds[0];
+        } else if (cityIds.length > 1) {
+          where.cityId = { in: cityIds };
+        }
       }
-    } else if (query.cityId?.trim()) {
-      where.cityId = query.cityId.trim();
+    } else {
+      const cityIds = this.parseCityIdsFilter(query.cityIds, query.cityId);
+      if (cityIds.length === 1) {
+        where.cityId = cityIds[0];
+      } else if (cityIds.length > 1) {
+        where.cityId = { in: cityIds };
+      }
     }
 
     const system = query.system?.trim();
@@ -1089,6 +1099,20 @@ export class GamesService {
     );
   }
 
+  private parseCityIdsFilter(cityIds?: string, cityId?: string): string[] {
+    const fromList = (cityIds ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    const single = cityId?.trim();
+
+    if (fromList.length > 0) {
+      return [...new Set(fromList)];
+    }
+
+    return single ? [single] : [];
+  }
+
   private parseScheduledAt(value?: string | null): Date | null {
     if (!value?.trim()) {
       return null;
@@ -1171,7 +1195,7 @@ export class GamesService {
       entityId: userId,
       collection: AVATAR_COLLECTION,
     });
-    const urls = this.mediaService.getCollectionUrls(media);
+    const urls = await this.mediaService.getCollectionUrls(media);
     return urls.thumb ?? urls.small ?? urls.medium ?? urls.large ?? null;
   }
 
@@ -1217,7 +1241,10 @@ export class GamesService {
       minAge: game.minAge,
       anyAge: game.minAge == null,
       systemName: game.userGameSystem.name,
-      cover: coverMedia.length > 0 ? this.mediaService.getCollectionUrls(coverMedia) : null,
+      cover:
+        coverMedia.length > 0
+          ? await this.mediaService.getCollectionUrls(coverMedia)
+          : null,
       playersCount: game._count.players,
       pendingApplicationsCount: options?.hidePendingCount ? 0 : game._count.applications,
       owner,

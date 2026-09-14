@@ -7,12 +7,17 @@ export type QuestionnaireCompletionInput = {
   experienceTypesCount: number;
   availability: string | null;
   cityId: string | null;
+  citiesCount?: number;
   playsOnline: boolean;
   timezone: string | null;
   systems: string[];
   readyToLearnNew: boolean;
   openToAnySystem: boolean;
 };
+
+function hasLocation(input: QuestionnaireCompletionInput): boolean {
+  return Boolean(input.cityId) || (input.citiesCount ?? 0) > 0 || input.playsOnline;
+}
 
 /** Only required questionnaire fields count toward completion %. */
 const QUESTIONNAIRE_COMPLETION_FIELDS = [
@@ -23,7 +28,7 @@ const QUESTIONNAIRE_COMPLETION_FIELDS = [
   (input: QuestionnaireCompletionInput) => input.experienceTypesCount > 0,
   (input: QuestionnaireCompletionInput) => Boolean(input.availability?.trim()),
   (input: QuestionnaireCompletionInput) => Boolean(input.timezone?.trim()),
-  (input: QuestionnaireCompletionInput) => Boolean(input.cityId) || input.playsOnline,
+  hasLocation,
   (input: QuestionnaireCompletionInput) =>
     input.systems.length > 0 || input.readyToLearnNew || input.openToAnySystem,
 ] as const;
@@ -35,7 +40,7 @@ const WANDERERS_FEED_FIELDS = [
   (input: QuestionnaireCompletionInput) => input.experienceTypesCount > 0,
   (input: QuestionnaireCompletionInput) => Boolean(input.availability?.trim()),
   (input: QuestionnaireCompletionInput) => Boolean(input.timezone?.trim()),
-  (input: QuestionnaireCompletionInput) => Boolean(input.cityId) || input.playsOnline,
+  hasLocation,
   (input: QuestionnaireCompletionInput) =>
     input.systems.length > 0 || input.readyToLearnNew || input.openToAnySystem,
 ] as const;
@@ -49,6 +54,7 @@ export function buildQuestionnaireCompletionInput(
     experiences: readonly unknown[];
     availability: string | null;
     cityId: string | null;
+    userCities?: readonly unknown[];
     playsOnline: boolean;
     timezone?: string | null;
     systems: string[];
@@ -66,6 +72,7 @@ export function buildQuestionnaireCompletionInput(
     experienceTypesCount: user.experiences.length,
     availability: user.availability,
     cityId: user.cityId,
+    citiesCount: user.userCities?.length ?? 0,
     playsOnline: user.playsOnline,
     timezone: user.timezone ?? null,
     systems: user.systems,

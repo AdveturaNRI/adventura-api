@@ -23,6 +23,7 @@ export type UserProfile = {
   availability: string | null;
   age: number | null;
   city: ProfileCity | null;
+  cities: ProfileCity[];
   location: string | null;
   playsOnline: boolean;
   timezone: string;

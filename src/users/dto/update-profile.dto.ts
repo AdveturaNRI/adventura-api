@@ -1,5 +1,6 @@
 import {
   Allow,
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsInt,
@@ -48,6 +49,13 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   cityId?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(64, { each: true })
+  @ArrayMaxSize(3, { message: 'Можно указать не больше 3 городов' })
+  cityIds?: string[];
 
   @IsOptional()
   @IsBoolean()

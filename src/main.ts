@@ -1,5 +1,3 @@
-import { join } from 'path';
-
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
@@ -13,12 +11,6 @@ import { PrismaService } from './prisma/prisma.service';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const configService = app.get(ConfigService);
-
-  const uploadsDir = configService.get<string>(
-    'UPLOADS_DIR',
-    join(process.cwd(), 'uploads'),
-  );
-  app.useStaticAssets(uploadsDir, { prefix: '/uploads' });
 
   app.setGlobalPrefix('api');
 

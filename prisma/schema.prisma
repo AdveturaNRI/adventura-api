@@ -34,6 +34,7 @@ model User {
   statuses        UserStatus[]
   experiences     UserExperience[]
   city            City?            @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  userCities      UserCity[]
   gameSystems     UserGameSystem[]
   wandererReactionsGiven    WandererReaction[] @relation("WandererReactionsGiven")
   wandererReactionsReceived WandererReaction[] @relation("WandererReactionsReceived")
@@ -228,6 +229,7 @@ model City {
   updatedAt  DateTime @updatedAt
   country    Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
   users      User[]
+  userCities UserCity[]
   games      Game[]
   clubs      Club[]
 
@@ -235,6 +237,20 @@ model City {
   @@index([name])
   @@index([countryId, population])
   @@map("cities")
+}
+
+model UserCity {
+  userId    String
+  cityId    String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  city      City     @relation(fields: [cityId], references: [id], onDelete: Cascade)
+
+  @@id([userId, cityId])
+  @@index([cityId])
+  @@index([userId, sortOrder])
+  @@map("user_cities")
 }
 
 model Club {
