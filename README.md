@@ -13,9 +13,11 @@ Create only one repository-level secret here:
 
 - `SWARM_SERVICE=adventura_api`
 
-The workflow deliberately does not run Prisma migrations. In the production
-stack, `adventura_migrate` is a separate task; run and verify that task before
-deploying an API version that depends on a schema migration.
+Before the API update, the workflow forces `adventura_migrate` to run the
+published image's `prisma migrate deploy` command and waits up to five minutes
+for it to complete. A failed or timed-out migration stops the release before
+the API service is changed. Prisma migrations must remain backward-compatible
+with the currently running API during this short transition.
 
 <p align="center">
   <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
