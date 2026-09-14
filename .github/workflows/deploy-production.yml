@@ -76,7 +76,7 @@ jobs:
       - name: Install SSH password helper
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends sshpass
 
-      - name: Update only the API Swarm service
+      - name: Run migrations, then update the API Swarm service
         shell: bash
         run: |
           set -euo pipefail
@@ -93,5 +93,50 @@ jobs:
             -o PubkeyAuthentication=no \
             -o HostKeyAlias=adventura-deploy \
             -o StrictHostKeyChecking=yes \
-            "$DEPLOY_USER@$DEPLOY_HOST" \
-            "docker service update --detach=false --with-registry-auth --image '$image' '$SWARM_SERVICE'"
+            "$DEPLOY_USER@$DEPLOY_HOST" sh -s -- "$image" "$SWARM_SERVICE" <<'REMOTE'
+          set -eu
+
+          image="$1"
+          api_service="$2"
+          migration_service="${api_service%_api}_migrate"
+
+          if [ "$migration_service" = "$api_service" ]; then
+            echo "SWARM_SERVICE must end with _api to derive the migration service" >&2
+            exit 2
+          fi
+
+          docker service inspect "$migration_service" >/dev/null
+          docker service inspect "$api_service" >/dev/null
+
+          echo "Starting migration service: $migration_service"
+          docker service update --detach=true --with-registry-auth --force \
+            --image "$image" "$migration_service"
+
+          deadline=$(( $(date +%s) + 300 ))
+          while :; do
+            task_state="$(docker service ps --no-trunc --format '{{.CurrentState}}' "$migration_service" | head -n 1)"
+            case "$task_state" in
+              Complete*)
+                echo "Migrations completed successfully"
+                break
+                ;;
+              Failed*|Rejected*)
+                echo "Migration task failed: $task_state" >&2
+                docker service logs --tail 100 "$migration_service" >&2 || true
+                exit 1
+                ;;
+            esac
+
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "Timed out waiting for migration task: $task_state" >&2
+              docker service logs --tail 100 "$migration_service" >&2 || true
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+          echo "Updating API service: $api_service"
+          docker service update --detach=false --with-registry-auth \
+            --image "$image" "$api_service"
+          REMOTE
