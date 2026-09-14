@@ -1,0 +1,97 @@
+name: Build and deploy production API
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: adventura-api-production
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: moskowpsix/adventura-api
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Buildx builder
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-
+
+      - name: Build and publish image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_DIGEST: ${{ needs.build-and-push.outputs.digest }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      SSHPASS: ${{ secrets.DEPLOY_PASSWORD }}
+      SWARM_SERVICE: ${{ secrets.SWARM_SERVICE }}
+    steps:
+      - name: Configure verified SSH access
+        shell: bash
+        run: |
+          set -eu
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Install SSH password helper
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends sshpass
+
+      - name: Update only the API Swarm service
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_HOST:?Set DEPLOY_HOST in GitHub Actions secrets}"
+          : "${DEPLOY_USER:?Set DEPLOY_USER in GitHub Actions secrets}"
+          : "${DEPLOY_KNOWN_HOSTS:?Set DEPLOY_KNOWN_HOSTS in GitHub Actions secrets}"
+          : "${SSHPASS:?Set DEPLOY_PASSWORD in GitHub Actions secrets}"
+          : "${SWARM_SERVICE:?Set SWARM_SERVICE in repository Actions secrets}"
+          deploy_port="${DEPLOY_PORT:-22}"
+          image="${IMAGE_NAME}@${IMAGE_DIGEST}"
+
+          sshpass -e ssh -p "$deploy_port" \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
+            -o HostKeyAlias=adventura-deploy \
+            -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "docker service update --detach=false --with-registry-auth --image '$image' '$SWARM_SERVICE'"
