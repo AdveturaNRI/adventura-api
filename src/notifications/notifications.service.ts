@@ -14,7 +14,8 @@ export type NotificationDto = {
     | 'game_application'
     | 'game_application_accepted'
     | 'game_application_rejected'
-    | 'game_player_removed';
+    | 'game_player_removed'
+    | 'game_deleted';
   actor: {
     id: string;
     nickname: string;
@@ -247,6 +248,54 @@ export class NotificationsService {
     );
   }
 
+  async notifyGameDeleted(
+    masterId: string,
+    playerIds: string[],
+    game: { id: string; title: string },
+  ) {
+    const uniquePlayerIds = [...new Set(playerIds)].filter((id) => id && id !== masterId);
+    if (uniquePlayerIds.length === 0) {
+      return [];
+    }
+
+    const subject = game.title.trim() || 'Игра';
+    const results = [];
+
+    for (const playerId of uniquePlayerIds) {
+      const notification = await this.prisma.notification.upsert({
+        where: {
+          userId_type_actorId_refId: {
+            userId: playerId,
+            type: NotificationType.GAME_DELETED,
+            actorId: masterId,
+            refId: game.id,
+          },
+        },
+        create: {
+          userId: playerId,
+          actorId: masterId,
+          type: NotificationType.GAME_DELETED,
+          subject,
+          refId: game.id,
+        },
+        update: {
+          readAt: null,
+          subject,
+        },
+        include: {
+          actor: { select: { id: true, nickname: true } },
+        },
+      });
+
+      const dto = await this.toDto(notification);
+      this.realtime.emitNotificationNew(playerId, dto);
+      await this.emitUnread(playerId);
+      results.push(dto);
+    }
+
+    return results;
+  }
+
   private async notifyGameApplicationDecision(
     masterId: string,
     applicantId: string,
@@ -386,6 +435,27 @@ export class NotificationsService {
           avatarUrl,
         },
         actionText: 'убрал вас из состава',
+        messageText: '',
+        subject: item.subject,
+        refId: item.refId,
+        canAddBack: false,
+        readAt: item.readAt?.toISOString() ?? null,
+        createdAt: item.createdAt.toISOString(),
+        updatedAt: item.updatedAt.toISOString(),
+      };
+    }
+
+
+    if (item.type === NotificationType.GAME_DELETED) {
+      return {
+        id: item.id,
+        type: 'game_deleted',
+        actor: {
+          id: item.actor.id,
+          nickname: item.actor.nickname,
+          avatarUrl,
+        },
+        actionText: 'удалил игру',
         messageText: '',
         subject: item.subject,
         refId: item.refId,

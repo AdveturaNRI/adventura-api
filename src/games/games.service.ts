@@ -30,6 +30,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplyGameDto } from './dto/apply-game.dto';
 import { CreateGameDto, CreateGameKindDto } from './dto/create-game.dto';
+import { DeleteGameDto } from './dto/delete-game.dto';
 import { ListGamesFeedQueryDto } from './dto/list-games-feed.dto';
 import {
   UpdateGameStatusDto,
@@ -911,6 +912,55 @@ export class GamesService {
     });
 
     return this.getOwned(ownerId, gameId);
+  }
+
+
+  async remove(
+    ownerId: string,
+    gameId: string,
+    dto: DeleteGameDto = {},
+  ): Promise<{ ok: true }> {
+    await this.requireOwnedGame(ownerId, gameId);
+
+    const game = await this.prisma.game.findFirst({
+      where: { id: gameId, ownerId },
+      select: {
+        id: true,
+        title: true,
+        players: { select: { userId: true } },
+      },
+    });
+
+    if (!game) {
+      throw new NotFoundException('Игра не найдена');
+    }
+
+    const playerIds = game.players.map((player) => player.userId);
+    const deleteChat = Boolean(dto.deleteChat);
+
+    if (deleteChat) {
+      await this.chatsService.deleteGameChat(gameId);
+    } else {
+      await this.chatsService.postGameDeletedMessage(ownerId, gameId, game.title);
+      await this.chatsService.detachGameChat(gameId);
+    }
+
+    await this.mediaService.deleteCollection({
+      entityType: GAME_ENTITY_TYPE,
+      entityId: gameId,
+      collection: COVER_COLLECTION,
+    });
+
+    await this.prisma.game.delete({
+      where: { id: gameId },
+    });
+
+    await this.notificationsService.notifyGameDeleted(ownerId, playerIds, {
+      id: game.id,
+      title: game.title,
+    });
+
+    return { ok: true as const };
   }
 
   async deleteCover(ownerId: string, gameId: string) {

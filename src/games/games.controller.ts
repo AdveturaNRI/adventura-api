@@ -20,6 +20,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthUser } from '../auth/types/auth-response.type';
 import { ApplyGameDto } from './dto/apply-game.dto';
 import { CreateGameDto } from './dto/create-game.dto';
+import { DeleteGameDto } from './dto/delete-game.dto';
 import { ListGamesFeedQueryDto } from './dto/list-games-feed.dto';
 import { UpdateGameStatusDto } from './dto/update-game-status.dto';
 import { UpdateGameDto } from './dto/update-game.dto';
@@ -112,6 +113,16 @@ export class GamesController {
     @Param('userId') userId: string,
   ) {
     return this.gamesService.removePlayer(user.id, id, userId);
+  }
+
+
+  @Delete(':id')
+  remove(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: DeleteGameDto,
+  ) {
+    return this.gamesService.remove(user.id, id, dto);
   }
 
   @Post(':id/cover')

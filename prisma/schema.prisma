@@ -345,7 +345,7 @@ model Conversation {
   lastMessageAt DateTime?
   createdAt     DateTime                   @default(now())
   updatedAt     DateTime                   @updatedAt
-  game          Game?                      @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  game          Game?                      @relation(fields: [gameId], references: [id], onDelete: SetNull)
   userLow       User?                      @relation("ConversationUserLow", fields: [userLowId], references: [id], onDelete: Cascade)
   userHigh      User?                      @relation("ConversationUserHigh", fields: [userHighId], references: [id], onDelete: Cascade)
   messages      Message[]
@@ -390,6 +390,7 @@ enum MessageKind {
   FAVORITE_REMOVED
   USER_BLOCKED
   USER_UNBLOCKED
+  GAME_DELETED
 }
 
 model Message {
@@ -415,6 +416,7 @@ enum NotificationType {
   GAME_APPLICATION_ACCEPTED
   GAME_APPLICATION_REJECTED
   GAME_PLAYER_REMOVED
+  GAME_DELETED
 }
 
 model Notification {

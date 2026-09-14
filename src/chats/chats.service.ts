@@ -54,7 +54,8 @@ export type ChatMessageKind =
   | 'favorite_received'
   | 'favorite_removed'
   | 'user_blocked'
-  | 'user_unblocked';
+  | 'user_unblocked'
+  | 'game_deleted';
 
 export type ChatMessageSender = {
   id: string;
@@ -112,6 +113,9 @@ function toChatMessageKind(kind: MessageKind | undefined): ChatMessageKind {
   }
   if (kind === MessageKind.USER_UNBLOCKED) {
     return 'user_unblocked';
+  }
+  if (kind === MessageKind.GAME_DELETED) {
+    return 'game_deleted';
   }
   return 'user';
 }
@@ -504,6 +508,120 @@ export class ChatsService {
         this.realtime.emitConversationUpdated([id], summary);
       }),
     );
+  }
+
+
+  /**
+   * System notice in the game group chat when the master deletes the game.
+   * Call before detaching/deleting the conversation.
+   */
+  async postGameDeletedMessage(ownerId: string, gameId: string, gameTitle: string) {
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { gameId },
+      select: { id: true },
+    });
+    if (!conversation) {
+      return null;
+    }
+
+    const conversationId = conversation.id;
+    const title = gameTitle.trim() || 'Игра';
+    const now = new Date();
+    const message = await this.prisma.message.create({
+      data: {
+        conversationId,
+        senderId: ownerId,
+        body: `удалил игру «${title}».`,
+        kind: MessageKind.GAME_DELETED,
+      },
+    });
+
+    const participantIds = await this.getParticipantIds(conversationId);
+
+    await this.prisma.$transaction([
+      this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { lastMessageAt: now },
+      }),
+      this.prisma.conversationRead.upsert({
+        where: {
+          conversationId_userId: { conversationId, userId: ownerId },
+        },
+        create: { conversationId, userId: ownerId, lastReadAt: now, hiddenAt: null },
+        update: { lastReadAt: now, hiddenAt: null },
+      }),
+      ...participantIds
+        .filter((id) => id !== ownerId)
+        .map((id) =>
+          this.prisma.conversationRead.upsert({
+            where: {
+              conversationId_userId: { conversationId, userId: id },
+            },
+            create: {
+              conversationId,
+              userId: id,
+              lastReadAt: new Date(0),
+              hiddenAt: null,
+            },
+            update: { hiddenAt: null },
+          }),
+        ),
+    ]);
+
+    const dto = await this.toMessageDto(message);
+    this.realtime.emitMessageNew(participantIds, dto);
+
+    await Promise.all(
+      participantIds.map(async (id) => {
+        const summary = await this.getConversationSummary(id, conversationId);
+        this.realtime.emitConversationUpdated([id], summary);
+      }),
+    );
+
+    await this.emitUnreadForUsers(participantIds);
+    return dto;
+  }
+
+  /** Unlink chat from game so it survives game deletion. */
+  async detachGameChat(gameId: string) {
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { gameId },
+      select: { id: true },
+    });
+    if (!conversation) {
+      return;
+    }
+
+    await this.prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { gameId: null },
+    });
+
+    const participantIds = await this.getParticipantIds(conversation.id);
+    await Promise.all(
+      participantIds.map(async (id) => {
+        const summary = await this.getConversationSummary(id, conversation.id);
+        this.realtime.emitConversationUpdated([id], summary);
+      }),
+    );
+  }
+
+  /** Hard-delete the game group chat for everyone. */
+  async deleteGameChat(gameId: string) {
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { gameId },
+      select: { id: true },
+    });
+    if (!conversation) {
+      return;
+    }
+
+    const conversationId = conversation.id;
+    const participantIds = await this.getParticipantIds(conversationId);
+    await this.deleteConversationMedia(conversationId);
+    await this.prisma.conversation.delete({ where: { id: conversationId } });
+    this.realtime.emitConversationDeleted(participantIds, { conversationId });
+    await this.emitUnreadForUsers(participantIds);
   }
 
   async renameGameChat(gameId: string, title: string) {

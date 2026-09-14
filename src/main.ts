@@ -14,9 +14,9 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
 
-  const corsOrigins = configService.get<string>('CORS_ORIGINS');
+  // Reflect request Origin so any browser/client works with credentials.
   app.enableCors({
-    origin: corsOrigins ? corsOrigins.split(',').map((origin) => origin.trim()) : true,
+    origin: true,
     credentials: true,
   });
 
