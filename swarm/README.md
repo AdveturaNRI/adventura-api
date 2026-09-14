@@ -32,6 +32,14 @@ openssl rand -hex 48 | docker secret create adventura_admin_cookie_secret -
 openssl rand -hex 48 | docker secret create adventura_admin_session_secret -
 ```
 
+Create the S3 secrets from the access credentials issued by your object
+storage provider. These are not generated with `openssl`.
+
+```bash
+printf %s '<S3_ACCESS_KEY_ID>' | docker secret create adventura_s3_access_key_id -
+printf %s '<S3_SECRET_ACCESS_KEY>' | docker secret create adventura_s3_secret_access_key -
+```
+
 ## 3. Set non-secret deployment variables
 
 Create a local `.env.swarm` file outside Git:
@@ -42,6 +50,38 @@ WEB_DOMAIN=app.example.com
 ADMIN_EMAIL=admin@example.com
 DADATA_API_KEY=
 DADATA_SECRET_KEY=
+```
+
+S3 endpoint, region, bucket name, and URL TTL are not secrets. Add them to
+the API service environment in the stack (or in SwarmPit):
+
+```yaml
+S3_ENDPOINT: https://storage.yandexcloud.net
+S3_REGION: ru-central1
+S3_BUCKET: your-private-bucket
+S3_SIGNED_URL_EXPIRES_SEC: "3600"
+S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_access_key_id
+S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
+```
+
+Attach these secrets to the `api` service:
+
+```yaml
+secrets:
+  - s3_access_key_id
+  - s3_secret_access_key
+```
+
+Declare them at stack level:
+
+```yaml
+secrets:
+  s3_access_key_id:
+    external: true
+    name: adventura_s3_access_key_id
+  s3_secret_access_key:
+    external: true
+    name: adventura_s3_secret_access_key
 ```
 
 ## 4. Deploy and verify
