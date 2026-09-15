@@ -13,6 +13,7 @@ import { ConfigService } from '@nestjs/config';
 export class S3Service implements OnModuleInit {
   private readonly logger = new Logger(S3Service.name);
   private readonly client: S3Client;
+  private readonly publicClient: S3Client;
   private readonly bucket: string;
   private readonly signedUrlExpiresSec: number;
 
@@ -21,6 +22,11 @@ export class S3Service implements OnModuleInit {
       'S3_ENDPOINT',
       'https://storage.yandexcloud.net',
     );
+    // The API may reach an S3 service via an address unavailable to browsers
+    // (for example, `minio:9000` in Docker). Signed links must use a browser
+    // reachable host, without changing where uploads and deletes are sent.
+    const publicEndpoint =
+      configService.get<string>('S3_PUBLIC_ENDPOINT')?.trim() || endpoint;
     const region = configService.get<string>('S3_REGION', 'ru-central1');
     const accessKeyId = configService.get<string>('S3_ACCESS_KEY_ID', '');
     const secretAccessKey = configService.get<string>('S3_SECRET_ACCESS_KEY', '');
@@ -38,9 +44,8 @@ export class S3Service implements OnModuleInit {
       );
     }
 
-    this.client = new S3Client({
+    const clientOptions = {
       region,
-      endpoint,
       credentials: {
         accessKeyId,
         secretAccessKey,
@@ -51,7 +56,10 @@ export class S3Service implements OnModuleInit {
       // Yandex Object Storage rejects AWS SDK v3 default flexible checksums.
       requestChecksumCalculation: 'WHEN_REQUIRED',
       responseChecksumValidation: 'WHEN_REQUIRED',
-    });
+    } as const;
+
+    this.client = new S3Client({ ...clientOptions, endpoint });
+    this.publicClient = new S3Client({ ...clientOptions, endpoint: publicEndpoint });
   }
 
   onModuleInit() {
@@ -63,7 +71,7 @@ export class S3Service implements OnModuleInit {
   async getSignedObjectUrl(key: string, expiresInSec?: number): Promise<string> {
     const normalized = key.replace(/^\/+/, '').replace(/\\/g, '/');
     return getSignedUrl(
-      this.client,
+      this.publicClient,
       new GetObjectCommand({
         Bucket: this.bucket,
         Key: normalized,

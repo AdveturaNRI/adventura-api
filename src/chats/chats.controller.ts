@@ -101,7 +101,10 @@ export class ChatsController {
     },
   ) {
     const files = [...(uploaded?.files ?? []), ...(uploaded?.file ?? [])];
-    return this.chatsService.sendMessage(user.id, conversationId, dto.body, files);
+    return this.chatsService.sendMessage(user.id, conversationId, dto.body, files, {
+      voiceDurationSec: dto.voiceDurationSec,
+      voiceWaveform: dto.voiceWaveform,
+    });
   }
 
   @Post(':id/read')
