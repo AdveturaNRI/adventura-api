@@ -9,6 +9,7 @@ import {
   ConversationType,
   MessageKind,
   WandererReactionType,
+  Prisma,
   type Conversation,
 } from '@prisma/client';
 
@@ -59,6 +60,8 @@ export type ChatAttachmentDto = {
   mimeType: string;
   url: string | null;
   image: ImageUrls | null;
+  durationSec: number | null;
+  waveform: number[] | null;
 };
 
 export type ChatMessageKind =
@@ -1310,6 +1313,7 @@ export class ChatsService {
     body: string | undefined,
     files: Express.Multer.File[] = [],
     replyToId?: string,
+    voice?: { voiceDurationSec?: number; voiceWaveform?: string },
   ) {
     const conversation = await this.assertParticipant(userId, conversationId);
     const participantIds = await this.getParticipantIds(conversationId);
@@ -1376,8 +1380,11 @@ export class ChatsService {
         );
         await this.mediaService.replaceCollection(entity, variants);
       } else {
+        const isVoice = kind === 'audio' && uploads.length === 1 && Boolean(voice?.voiceDurationSec);
         await this.mediaService.saveRawFile(entity, file.buffer, file.mimetype, {
           fileName: file.originalname?.trim() || attachmentName || undefined,
+          durationSec: isVoice ? voice?.voiceDurationSec : null,
+          waveform: isVoice ? this.parseVoiceWaveform(voice?.voiceWaveform) : null,
         });
       }
     }
@@ -2226,10 +2233,35 @@ export class ChatsService {
         mimeType: primary.mimeType,
         url: fileUrl,
         image,
+        durationSec: primary.durationSec,
+        waveform: this.parseStoredWaveform(primary.waveform),
       });
     }
 
     return attachments;
+  }
+
+  private parseVoiceWaveform(raw?: string): number[] | null {
+    if (!raw) return null;
+    try {
+      const values: unknown = JSON.parse(raw);
+      if (!Array.isArray(values) || values.length < 8 || values.length > 128) return null;
+      const waveform = values
+        .map(Number)
+        .filter(Number.isFinite)
+        .map((value) => Math.max(0, Math.min(1, value)));
+      return waveform.length === values.length ? waveform : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private parseStoredWaveform(value: Prisma.JsonValue | null): number[] | null {
+    if (!Array.isArray(value)) return null;
+    return value
+      .map(Number)
+      .filter(Number.isFinite)
+      .map((item) => Math.max(0, Math.min(1, item)));
   }
 
   private async getMessageAttachmentKind(

@@ -126,6 +126,10 @@ export class ChatsController {
       dto.body,
       files,
       dto.replyToId,
+      {
+        voiceDurationSec: dto.voiceDurationSec,
+        voiceWaveform: dto.voiceWaveform,
+      },
     );
   }
 

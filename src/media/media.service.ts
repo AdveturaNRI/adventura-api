@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Media } from '@prisma/client';
+import { Media, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../storage/s3.service';
@@ -58,7 +58,12 @@ export class MediaService {
     entity: MediaEntityRef,
     buffer: Buffer,
     mimeType: string,
-    options?: { variant?: string; fileName?: string },
+    options?: {
+      variant?: string;
+      fileName?: string;
+      durationSec?: number | null;
+      waveform?: Prisma.InputJsonValue | null;
+    },
   ): Promise<Media> {
     await this.deleteCollection(entity);
 
@@ -88,6 +93,8 @@ export class MediaService {
         width: null,
         height: null,
         size: buffer.length,
+        durationSec: options?.durationSec ?? null,
+        waveform: options?.waveform ?? undefined,
       },
     });
   }
