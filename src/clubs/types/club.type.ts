@@ -5,6 +5,11 @@ export type ClubScheduleDay = {
   close: string | null;
 };
 
+export type ClubLink = {
+  label: string;
+  url: string;
+};
+
 export type ClubListItem = {
   id: string;
   name: string;
@@ -13,11 +18,14 @@ export type ClubListItem = {
   lat: number;
   lng: number;
   city: { id: string; name: string; region: string | null } | null;
+  tags: string[];
+  links: ClubLink[];
   schedule: ClubScheduleDay[];
   isPublished: boolean;
   coverUrl: string | null;
   galleryUrls: string[];
   isOwner: boolean;
+  canManage: boolean;
   createdAt: string;
   updatedAt: string;
 };
