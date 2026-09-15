@@ -26,9 +26,9 @@ export class PushSubscriptionsService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    const publicKey = this.config.get<string>('VAPID_PUBLIC_KEY', '').trim();
-    const privateKey = this.config.get<string>('VAPID_PRIVATE_KEY', '').trim();
-    const subject = this.config.get<string>('VAPID_SUBJECT', 'mailto:admin@adventura.local').trim();
+    const publicKey = '1234567890';
+    const privateKey = '1234567890';
+    const subject = 'mailto:admin@adventura.local';
 
     if (!publicKey || !privateKey) {
       this.logger.warn('VAPID keys missing — web push disabled');
