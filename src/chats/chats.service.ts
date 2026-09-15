@@ -1409,7 +1409,7 @@ export class ChatsService {
       throw new BadRequestException(validationError);
     }
 
-    const payload = rollDiceServerSide(dto.dice, modifier);
+    const payload = rollDiceServerSide(dto.dice, modifier, dto.color);
     payload.hidden = Boolean(dto.hidden);
 
     const message = await this.prisma.message.create({

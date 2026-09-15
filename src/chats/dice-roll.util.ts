@@ -18,7 +18,22 @@ export type DiceRollPayload = {
   sum: number | null;
   hidden: boolean;
   redacted?: boolean;
+  /** Hex `#RRGGBB` цвета кубов отправителя. */
+  color?: string;
 };
+
+const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+
+export function normalizeDiceColor(raw: string | null | undefined): string | undefined {
+  if (!raw?.trim()) {
+    return undefined;
+  }
+  const value = raw.trim();
+  if (!HEX_COLOR_RE.test(value)) {
+    return undefined;
+  }
+  return `#${value.slice(1).toUpperCase()}`;
+}
 
 export type DiceRollDieInput = {
   sides: number;
@@ -66,6 +81,7 @@ export function formatDiceFormula(dice: DiceRollDieInput[], modifier = 0) {
 export function rollDiceServerSide(
   dice: DiceRollDieInput[],
   modifier = 0,
+  color?: string,
 ): DiceRollPayload {
   const groups: DiceRollGroupPayload[] = [];
   const values: number[] = [];
@@ -85,6 +101,7 @@ export function rollDiceServerSide(
   }
 
   const diceSum = values.reduce((a, b) => a + b, 0);
+  const normalizedColor = normalizeDiceColor(color);
   return {
     v: DICE_ROLL_PAYLOAD_VERSION,
     formula: formatDiceFormula(dice, modifier),
@@ -93,6 +110,7 @@ export function rollDiceServerSide(
     values,
     sum: diceSum + modifier,
     hidden: false,
+    ...(normalizedColor ? { color: normalizedColor } : {}),
   };
 }
 
@@ -109,6 +127,7 @@ export function parseDiceRollPayload(body: string | null | undefined): DiceRollP
     if (parsed?.v !== DICE_ROLL_PAYLOAD_VERSION || typeof parsed.formula !== 'string') {
       return null;
     }
+    const color = normalizeDiceColor(parsed.color);
     return {
       v: DICE_ROLL_PAYLOAD_VERSION,
       formula: parsed.formula,
@@ -118,6 +137,7 @@ export function parseDiceRollPayload(body: string | null | undefined): DiceRollP
       sum: typeof parsed.sum === 'number' ? parsed.sum : null,
       hidden: Boolean(parsed.hidden),
       redacted: Boolean(parsed.redacted),
+      ...(color ? { color } : {}),
     };
   } catch {
     return null;
@@ -135,6 +155,7 @@ export function redactDiceRollPayload(payload: DiceRollPayload): DiceRollPayload
     sum: null,
     hidden: true,
     redacted: true,
+    ...(payload.color ? { color: payload.color } : {}),
   };
 }
 

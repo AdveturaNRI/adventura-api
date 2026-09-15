@@ -7,6 +7,7 @@ import {
   IsIn,
   IsInt,
   IsOptional,
+  Matches,
   Max,
   Min,
   ValidateNested,
@@ -42,4 +43,9 @@ export class SendDiceRollDto {
   @IsOptional()
   @IsBoolean()
   hidden?: boolean;
+
+  /** Hex `#RRGGBB` — цвет кубов у отправителя, для анимации у зрителей. */
+  @IsOptional()
+  @Matches(/^#[0-9A-Fa-f]{6}$/)
+  color?: string;
 }

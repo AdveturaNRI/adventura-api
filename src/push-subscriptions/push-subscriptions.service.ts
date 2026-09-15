@@ -1,5 +1,4 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import * as webpush from 'web-push';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -21,23 +20,27 @@ export class PushSubscriptionsService implements OnModuleInit {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
     private readonly realtime: RealtimeEmitter,
   ) {}
 
   onModuleInit() {
-    const publicKey = '1234567890';
-    const privateKey = '1234567890';
+    // TODO: вернуть чтение из env (VAPID_*), пока захардкожено для локальной отладки.
+    const publicKey =
+      'BA-_N1Y8YDBuMgiH-9dv4y6QxQm3g-OClScxW-XKVg5e1rgGw2c0BZyA2L-qdU861jhe3x4RyBNQcdiRgJ2fIBw';
+    const privateKey = 'LPX80C41EA3IsQ57LLX4uR0dt6jo2EnrHu_ZqrOseIc';
     const subject = 'mailto:admin@adventura.local';
 
-    if (!publicKey || !privateKey) {
-      this.logger.warn('VAPID keys missing — web push disabled');
-      return;
+    try {
+      webpush.setVapidDetails(subject, publicKey, privateKey);
+      this.publicKey = publicKey;
+      this.configured = true;
+    } catch (error) {
+      this.logger.error(
+        `Invalid VAPID keys — web push disabled: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
-
-    webpush.setVapidDetails(subject, publicKey, privateKey);
-    this.publicKey = publicKey;
-    this.configured = true;
   }
 
   getPublicKey() {
