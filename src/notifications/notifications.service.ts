@@ -16,7 +16,8 @@ export type NotificationDto = {
     | 'game_application_accepted'
     | 'game_application_rejected'
     | 'game_player_removed'
-    | 'game_deleted';
+    | 'game_deleted'
+    | 'club_deleted';
   actor: {
     id: string;
     nickname: string;
@@ -302,6 +303,46 @@ export class NotificationsService {
     return results;
   }
 
+  async notifyClubDeleted(
+    actorId: string,
+    memberIds: string[],
+    club: { id: string; name: string },
+  ) {
+    const recipients = [...new Set(memberIds)].filter((id) => id && id !== actorId);
+    if (recipients.length === 0) {
+      return [];
+    }
+
+    const subject = club.name.trim() || 'Клуб';
+    const results = [];
+    for (const userId of recipients) {
+      const notification = await this.prisma.notification.upsert({
+        where: {
+          userId_type_actorId_refId: {
+            userId,
+            type: NotificationType.CLUB_DELETED,
+            actorId,
+            refId: club.id,
+          },
+        },
+        create: {
+          userId,
+          actorId,
+          type: NotificationType.CLUB_DELETED,
+          subject,
+          refId: club.id,
+        },
+        update: { readAt: null, subject },
+        include: { actor: { select: { id: true, nickname: true } } },
+      });
+      const dto = await this.toDto(notification);
+      this.realtime.emitNotificationNew(userId, dto);
+      await this.emitUnread(userId);
+      results.push(dto);
+    }
+    return results;
+  }
+
   private async notifyGameApplicationDecision(
     masterId: string,
     applicantId: string,
@@ -493,6 +534,26 @@ export class NotificationsService {
           avatarUrl,
         },
         actionText: 'удалил игру',
+        messageText: '',
+        subject: item.subject,
+        refId: item.refId,
+        canAddBack: false,
+        readAt: item.readAt?.toISOString() ?? null,
+        createdAt: item.createdAt.toISOString(),
+        updatedAt: item.updatedAt.toISOString(),
+      };
+    }
+
+    if (item.type === NotificationType.CLUB_DELETED) {
+      return {
+        id: item.id,
+        type: 'club_deleted',
+        actor: {
+          id: item.actor.id,
+          nickname: item.actor.nickname,
+          avatarUrl,
+        },
+        actionText: 'распустил клуб',
         messageText: '',
         subject: item.subject,
         refId: item.refId,

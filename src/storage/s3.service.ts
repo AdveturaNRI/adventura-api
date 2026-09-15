@@ -24,6 +24,9 @@ export class S3Service implements OnModuleInit {
     const region = configService.get<string>('S3_REGION', 'ru-central1');
     const accessKeyId = configService.get<string>('S3_ACCESS_KEY_ID', '');
     const secretAccessKey = configService.get<string>('S3_SECRET_ACCESS_KEY', '');
+    const forcePathStyle =
+      configService.get<string>('S3_FORCE_PATH_STYLE', 'false').toLowerCase() ===
+      'true';
     this.bucket = configService.get<string>('S3_BUCKET', '');
     this.signedUrlExpiresSec = Number(
       configService.get<string>('S3_SIGNED_URL_EXPIRES_SEC', '3600'),
@@ -42,6 +45,9 @@ export class S3Service implements OnModuleInit {
         accessKeyId,
         secretAccessKey,
       },
+      // MinIO normally uses path-style URLs: http://host:9000/bucket/key.
+      // Leave this disabled for Yandex Object Storage in production.
+      forcePathStyle,
       // Yandex Object Storage rejects AWS SDK v3 default flexible checksums.
       requestChecksumCalculation: 'WHEN_REQUIRED',
       responseChecksumValidation: 'WHEN_REQUIRED',

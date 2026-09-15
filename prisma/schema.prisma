@@ -49,6 +49,7 @@ model User {
   blocksReceived            UserBlock[]        @relation("BlocksReceived")
   gamesOwned                Game[]
   clubsOwned                Club[]
+  clubMemberships           ClubMember[]
   gameApplications          GameApplication[]
   gamePlayers               GamePlayer[]
   pushSubscriptions         PushSubscription[]
@@ -265,16 +266,40 @@ model Club {
   lng         Float
   cityId      String?
   city        City?    @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  tags        String[] @default([])
+  links       Json?
   /// JSON: [{ day: 1-7, closed, open: "HH:mm"|null, close: "HH:mm"|null }]
   schedule    Json
   isPublished Boolean  @default(true)
+  deletedAt   DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  members     ClubMember[]
 
   @@index([ownerId])
   @@index([cityId])
   @@index([lat, lng])
+  @@index([deletedAt])
   @@map("clubs")
+}
+
+enum ClubMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model ClubMember {
+  clubId    String
+  userId    String
+  role      ClubMemberRole @default(MEMBER)
+  createdAt DateTime       @default(now())
+  club      Club           @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([clubId, userId])
+  @@index([userId, role])
+  @@map("club_members")
 }
 
 model RefreshToken {
@@ -434,6 +459,7 @@ enum NotificationType {
   GAME_APPLICATION_REJECTED
   GAME_PLAYER_REMOVED
   GAME_DELETED
+  CLUB_DELETED
 }
 
 model Notification {

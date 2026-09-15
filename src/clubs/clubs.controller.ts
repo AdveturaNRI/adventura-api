@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -21,10 +22,12 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthUser } from '../auth/types/auth-response.type';
 import { ClubsService } from './clubs.service';
 import { CreateClubDto } from './dto/create-club.dto';
+import { DeleteClubDto } from './dto/delete-club.dto';
 import { GeocodeQueryDto } from './dto/geocode-query.dto';
 import { GeocodeReverseQueryDto } from './dto/geocode-reverse-query.dto';
 import { GeocodeSuggestQueryDto } from './dto/geocode-suggest-query.dto';
 import { UpdateClubDto } from './dto/update-club.dto';
+import { ReorderClubGalleryDto } from './dto/reorder-club-gallery.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('clubs')
@@ -81,8 +84,12 @@ export class ClubsController {
   }
 
   @Delete(':id')
-  remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.clubsService.remove(user.id, id);
+  remove(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: DeleteClubDto,
+  ) {
+    return this.clubsService.remove(user.id, id, dto);
   }
 
   @Post(':id/cover')
@@ -118,5 +125,38 @@ export class ClubsController {
     @UploadedFiles() files?: Express.Multer.File[],
   ) {
     return this.clubsService.uploadGallery(user.id, id, files ?? []);
+  }
+
+  @Post(':id/gallery/items')
+  @UseInterceptors(
+    FilesInterceptor('gallery', 8, {
+      storage: memoryStorage(),
+      limits: { fileSize: MAX_UPLOAD_FILE_SIZE_BYTES },
+    }),
+  )
+  addGalleryItems(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @UploadedFiles() files?: Express.Multer.File[],
+  ) {
+    return this.clubsService.addGalleryItems(user.id, id, files ?? []);
+  }
+
+  @Patch(':id/gallery/order')
+  reorderGallery(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ReorderClubGalleryDto,
+  ) {
+    return this.clubsService.reorderGallery(user.id, id, dto.order);
+  }
+
+  @Delete(':id/gallery/:index')
+  deleteGalleryItem(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('index', ParseIntPipe) index: number,
+  ) {
+    return this.clubsService.deleteGalleryItem(user.id, id, index);
   }
 }

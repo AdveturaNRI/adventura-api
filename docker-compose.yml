@@ -17,5 +17,72 @@ services:
       timeout: 5s
       retries: 5
 
+  minio:
+    image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    container_name: adventura-minio
+    command: server /data --console-address :9001
+    restart: unless-stopped
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-adventura-local}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-adventura-local-secret}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-adventura-local}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-adventura-local-secret}
+    entrypoint: >-
+      /bin/sh -ec
+      'mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}";
+      mc mb --ignore-existing local/adventura-local'
+
+  api:
+    build: .
+    image: adventura-api:local
+    container_name: adventura-api-local
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    environment:
+      NODE_ENV: development
+      PORT: '3000'
+      DATABASE_URL: postgresql://adventura:adventura@postgres:5432/adventura?schema=public
+      JWT_SECRET: local-development-jwt-secret-please-do-not-use-in-production-2026
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN_DAYS: '30'
+      ADMIN_EMAIL: admin@adventura.local
+      ADMIN_PASSWORD: admin123
+      ADMIN_COOKIE_SECRET: local-admin-cookie-secret-not-for-production
+      ADMIN_SESSION_SECRET: local-admin-session-secret-not-for-production
+      PUBLIC_URL: http://localhost:3000
+      S3_ENDPOINT: http://host.docker.internal:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: adventura-local
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-adventura-local}
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-adventura-local-secret}
+      S3_FORCE_PATH_STYLE: 'true'
+      S3_SIGNED_URL_EXPIRES_SEC: '3600'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
 volumes:
   postgres_data:
+  minio_data:

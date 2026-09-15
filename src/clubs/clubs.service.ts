@@ -6,14 +6,16 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
+import { ClubMemberRole, Prisma } from '@prisma/client';
 
 import { ImageProcessorService } from '../image/image-processor.service';
 import { MediaService } from '../media/media.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateClubDto, ClubScheduleDayDto } from './dto/create-club.dto';
+import { ClubLinkDto, CreateClubDto, ClubScheduleDayDto } from './dto/create-club.dto';
+import { DeleteClubDto } from './dto/delete-club.dto';
 import { UpdateClubDto } from './dto/update-club.dto';
-import type { ClubListItem, ClubScheduleDay, GeocodeResult } from './types/club.type';
+import type { ClubLink, ClubListItem, ClubScheduleDay, GeocodeResult } from './types/club.type';
 
 const CLUB_ENTITY_TYPE = 'Club';
 const COVER_COLLECTION = 'cover';
@@ -32,8 +34,11 @@ const CLUB_SELECT = {
   lat: true,
   lng: true,
   cityId: true,
+  tags: true,
+  links: true,
   schedule: true,
   isPublished: true,
+  deletedAt: true,
   createdAt: true,
   updatedAt: true,
   city: {
@@ -72,30 +77,64 @@ export class ClubsService {
     private readonly prisma: PrismaService,
     private readonly mediaService: MediaService,
     private readonly imageProcessor: ImageProcessorService,
+    private readonly notificationsService: NotificationsService,
     private readonly config: ConfigService,
   ) {}
 
   async listMap(viewerId: string): Promise<ClubListItem[]> {
     const clubs = await this.prisma.club.findMany({
       where: {
-        OR: [{ isPublished: true }, { ownerId: viewerId }],
+        deletedAt: null,
+        OR: [
+          { isPublished: true },
+          { ownerId: viewerId },
+          {
+            members: {
+              some: {
+                userId: viewerId,
+                role: { in: [ClubMemberRole.OWNER, ClubMemberRole.ADMIN] },
+              },
+            },
+          },
+        ],
       },
       select: CLUB_SELECT,
       orderBy: { updatedAt: 'desc' },
       take: 500,
     });
 
-    return Promise.all(clubs.map((club) => this.toListItem(club, viewerId)));
+    const manageableClubIds = await this.findManageableClubIds(
+      viewerId,
+      clubs.map((club) => club.id),
+    );
+    return Promise.all(
+      clubs.map((club) =>
+        this.toListItem(club, viewerId, manageableClubIds.has(club.id)),
+      ),
+    );
   }
 
   async listMine(ownerId: string): Promise<ClubListItem[]> {
     const clubs = await this.prisma.club.findMany({
-      where: { ownerId },
+      where: {
+        deletedAt: null,
+        OR: [
+          { ownerId },
+          {
+            members: {
+              some: {
+                userId: ownerId,
+                role: { in: [ClubMemberRole.OWNER, ClubMemberRole.ADMIN] },
+              },
+            },
+          },
+        ],
+      },
       select: CLUB_SELECT,
       orderBy: { updatedAt: 'desc' },
     });
 
-    return Promise.all(clubs.map((club) => this.toListItem(club, ownerId)));
+    return Promise.all(clubs.map((club) => this.toListItem(club, ownerId, true)));
   }
 
   async getOne(viewerId: string, clubId: string): Promise<ClubListItem> {
@@ -104,41 +143,50 @@ export class ClubsService {
       select: CLUB_SELECT,
     });
 
-    if (!club) {
+    if (!club || club.deletedAt) {
       throw new NotFoundException('Клуб не найден');
     }
 
-    if (!club.isPublished && club.ownerId !== viewerId) {
+    const canManage = await this.canManage(viewerId, club);
+    if (!club.isPublished && !canManage) {
       throw new NotFoundException('Клуб не найден');
     }
 
-    return this.toListItem(club, viewerId);
+    return this.toListItem(club, viewerId, canManage);
   }
 
   async create(ownerId: string, dto: CreateClubDto): Promise<ClubListItem> {
     const schedule = this.normalizeSchedule(dto.schedule);
     await this.assertCity(dto.cityId);
 
-    const created = await this.prisma.club.create({
-      data: {
-        ownerId,
-        name: dto.name.trim(),
-        description: dto.description?.trim() || null,
-        address: dto.address.trim(),
-        lat: dto.lat,
-        lng: dto.lng,
-        cityId: dto.cityId || null,
-        schedule,
-        isPublished: dto.isPublished ?? true,
-      },
-      select: CLUB_SELECT,
+    const created = await this.prisma.$transaction(async (tx) => {
+      const club = await tx.club.create({
+        data: {
+          ownerId,
+          name: dto.name.trim(),
+          description: dto.description?.trim() || null,
+          address: dto.address.trim(),
+          lat: dto.lat,
+          lng: dto.lng,
+          cityId: dto.cityId || null,
+          tags: this.normalizeTags(dto.tags),
+          links: this.normalizeLinks(dto.links),
+          schedule,
+          isPublished: dto.isPublished ?? true,
+        },
+        select: CLUB_SELECT,
+      });
+      await tx.clubMember.create({
+        data: { clubId: club.id, userId: ownerId, role: ClubMemberRole.OWNER },
+      });
+      return club;
     });
 
-    return this.toListItem(created, ownerId);
+    return this.toListItem(created, ownerId, true);
   }
 
   async update(ownerId: string, clubId: string, dto: UpdateClubDto): Promise<ClubListItem> {
-    await this.requireOwned(ownerId, clubId);
+    await this.requireManageAccess(ownerId, clubId);
     const schedule = this.normalizeSchedule(dto.schedule);
     await this.assertCity(dto.cityId);
 
@@ -151,24 +199,48 @@ export class ClubsService {
         lat: dto.lat,
         lng: dto.lng,
         cityId: dto.cityId || null,
+        tags: this.normalizeTags(dto.tags),
+        links: this.normalizeLinks(dto.links),
         schedule,
         isPublished: dto.isPublished ?? true,
       },
       select: CLUB_SELECT,
     });
 
-    return this.toListItem(updated, ownerId);
+    return this.toListItem(updated, ownerId, true);
   }
 
-  async remove(ownerId: string, clubId: string): Promise<{ ok: true }> {
-    await this.requireOwned(ownerId, clubId);
-    await this.deleteAllMedia(clubId);
-    await this.prisma.club.delete({ where: { id: clubId } });
+  async remove(
+    actorId: string,
+    clubId: string,
+    dto: DeleteClubDto,
+  ): Promise<{ ok: true }> {
+    const club = await this.requireManageAccess(actorId, clubId);
+    if (dto.confirmationName.trim() !== club.name) {
+      throw new BadRequestException('Введите точное название клуба для подтверждения');
+    }
+
+    const memberIds = await this.prisma.$transaction(async (tx) => {
+      const members = await tx.clubMember.findMany({
+        where: { clubId },
+        select: { userId: true },
+      });
+      await tx.club.update({
+        where: { id: clubId },
+        data: { isPublished: false, deletedAt: new Date() },
+      });
+      return members.map((member) => member.userId);
+    });
+
+    await this.notificationsService.notifyClubDeleted(actorId, memberIds, {
+      id: club.id,
+      name: club.name,
+    });
     return { ok: true };
   }
 
   async uploadCover(ownerId: string, clubId: string, file?: Express.Multer.File) {
-    await this.requireOwned(ownerId, clubId);
+    await this.requireManageAccess(ownerId, clubId);
     if (!file) {
       throw new BadRequestException('Файл не передан');
     }
@@ -188,21 +260,21 @@ export class ClubsService {
       variants,
     );
 
-    return this.getOwned(ownerId, clubId);
+    return this.getManaged(ownerId, clubId);
   }
 
   async deleteCover(ownerId: string, clubId: string) {
-    await this.requireOwned(ownerId, clubId);
+    await this.requireManageAccess(ownerId, clubId);
     await this.mediaService.deleteCollection({
       entityType: CLUB_ENTITY_TYPE,
       entityId: clubId,
       collection: COVER_COLLECTION,
     });
-    return this.getOwned(ownerId, clubId);
+    return this.getManaged(ownerId, clubId);
   }
 
   async uploadGallery(ownerId: string, clubId: string, files: Express.Multer.File[]) {
-    await this.requireOwned(ownerId, clubId);
+    await this.requireManageAccess(ownerId, clubId);
 
     if (!files?.length) {
       throw new BadRequestException('Файлы не переданы');
@@ -215,24 +287,66 @@ export class ClubsService {
     await this.deleteGallery(clubId);
 
     for (let index = 0; index < files.length; index += 1) {
-      const file = files[index];
-      const variants = await this.imageProcessor.processImage(
-        file.buffer,
-        file.mimetype,
-        ['cardThumb', 'card', 'original'],
-      );
-
-      await this.mediaService.replaceCollection(
-        {
-          entityType: CLUB_ENTITY_TYPE,
-          entityId: clubId,
-          collection: `${GALLERY_PREFIX}${index}`,
-        },
-        variants,
-      );
+      await this.storeGalleryFile(clubId, index, files[index]);
     }
 
-    return this.getOwned(ownerId, clubId);
+    return this.getManaged(ownerId, clubId);
+  }
+
+  async addGalleryItems(ownerId: string, clubId: string, files: Express.Multer.File[]) {
+    await this.requireManageAccess(ownerId, clubId);
+
+    if (!files?.length) {
+      throw new BadRequestException('Файлы не переданы');
+    }
+
+    const existingIndices = await this.getGalleryIndices(clubId);
+    if (existingIndices.length + files.length > MAX_GALLERY) {
+      throw new BadRequestException(`Максимум ${MAX_GALLERY} фото в галерее`);
+    }
+
+    const start = existingIndices.length;
+    for (let offset = 0; offset < files.length; offset += 1) {
+      await this.storeGalleryFile(clubId, start + offset, files[offset]);
+    }
+
+    return this.getManaged(ownerId, clubId);
+  }
+
+  async deleteGalleryItem(ownerId: string, clubId: string, index: number) {
+    await this.requireManageAccess(ownerId, clubId);
+    const existingIndices = await this.getGalleryIndices(clubId);
+    if (!existingIndices.includes(index)) {
+      throw new NotFoundException('Фото в галерее не найдено');
+    }
+
+    await this.mediaService.deleteCollection({
+      entityType: CLUB_ENTITY_TYPE,
+      entityId: clubId,
+      collection: `${GALLERY_PREFIX}${index}`,
+    });
+    await this.reorderGalleryCollections(
+      clubId,
+      existingIndices.filter((item) => item !== index),
+    );
+    return this.getManaged(ownerId, clubId);
+  }
+
+  async reorderGallery(ownerId: string, clubId: string, order: number[]) {
+    await this.requireManageAccess(ownerId, clubId);
+    const existingIndices = await this.getGalleryIndices(clubId);
+    const requested = [...new Set(order)];
+    const isSameSet =
+      order.length === existingIndices.length &&
+      requested.length === existingIndices.length &&
+      requested.every((index) => existingIndices.includes(index));
+
+    if (!isSameSet) {
+      throw new BadRequestException('Передан неполный или некорректный порядок галереи');
+    }
+
+    await this.reorderGalleryCollections(clubId, order);
+    return this.getManaged(ownerId, clubId);
   }
 
   async geocode(query: string, countrycodes = 'ru'): Promise<GeocodeResult> {
@@ -720,22 +834,22 @@ export class ClubsService {
     return null;
   }
 
-  private async getOwned(ownerId: string, clubId: string) {
-    const club = await this.requireOwned(ownerId, clubId);
-    return this.toListItem(club, ownerId);
+  private async getManaged(userId: string, clubId: string) {
+    const club = await this.requireManageAccess(userId, clubId);
+    return this.toListItem(club, userId, true);
   }
 
-  private async requireOwned(ownerId: string, clubId: string): Promise<ClubRow> {
+  private async requireManageAccess(userId: string, clubId: string): Promise<ClubRow> {
     const club = await this.prisma.club.findUnique({
       where: { id: clubId },
       select: CLUB_SELECT,
     });
 
-    if (!club) {
+    if (!club || club.deletedAt) {
       throw new NotFoundException('Клуб не найден');
     }
 
-    if (club.ownerId !== ownerId) {
+    if (!(await this.canManage(userId, club))) {
       throw new ForbiddenException('Это не ваш клуб');
     }
 
@@ -791,6 +905,65 @@ export class ClubsService {
     return normalized;
   }
 
+  private normalizeTags(tags?: string[]): string[] {
+    const unique = new Map<string, string>();
+    for (const raw of tags ?? []) {
+      const value = raw.trim();
+      if (value) {
+        unique.set(value.toLocaleLowerCase('ru-RU'), value);
+      }
+    }
+    return [...unique.values()];
+  }
+
+  private normalizeLinks(links?: ClubLinkDto[]): ClubLink[] {
+    return (links ?? [])
+      .map((link) => ({ label: link.label.trim(), url: link.url.trim() }))
+      .filter((link) => link.label && link.url);
+  }
+
+  private parseLinks(value: Prisma.JsonValue | null): ClubLink[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value
+      .filter(
+        (item): item is Prisma.JsonObject =>
+          typeof item === 'object' && item !== null && !Array.isArray(item),
+      )
+      .map((item) => ({
+        label: String(item.label ?? '').trim(),
+        url: String(item.url ?? '').trim(),
+      }))
+      .filter((item) => item.label && item.url);
+  }
+
+  private async canManage(userId: string, club: ClubRow): Promise<boolean> {
+    if (club.ownerId === userId) {
+      return true;
+    }
+    const membership = await this.prisma.clubMember.findUnique({
+      where: { clubId_userId: { clubId: club.id, userId } },
+      select: { role: true },
+    });
+    return membership?.role === ClubMemberRole.OWNER || membership?.role === ClubMemberRole.ADMIN;
+  }
+
+  private async findManageableClubIds(userId: string, clubIds: string[]): Promise<Set<string>> {
+    if (clubIds.length === 0) {
+      return new Set();
+    }
+    const memberships = await this.prisma.clubMember.findMany({
+      where: {
+        userId,
+        clubId: { in: clubIds },
+        role: { in: [ClubMemberRole.OWNER, ClubMemberRole.ADMIN] },
+      },
+      select: { clubId: true },
+    });
+    return new Set(memberships.map((membership) => membership.clubId));
+  }
+
   private parseSchedule(value: Prisma.JsonValue): ClubScheduleDay[] {
     if (!Array.isArray(value)) {
       return [];
@@ -807,6 +980,27 @@ export class ClubsService {
     });
   }
 
+  private async storeGalleryFile(
+    clubId: string,
+    index: number,
+    file: Express.Multer.File,
+  ) {
+    const variants = await this.imageProcessor.processImage(
+      file.buffer,
+      file.mimetype,
+      ['cardThumb', 'card', 'original'],
+    );
+
+    await this.mediaService.replaceCollection(
+      {
+        entityType: CLUB_ENTITY_TYPE,
+        entityId: clubId,
+        collection: `${GALLERY_PREFIX}${index}`,
+      },
+      variants,
+    );
+  }
+
   private async deleteGallery(clubId: string) {
     for (let index = 0; index < MAX_GALLERY; index += 1) {
       await this.mediaService.deleteCollection({
@@ -817,16 +1011,54 @@ export class ClubsService {
     }
   }
 
-  private async deleteAllMedia(clubId: string) {
-    await this.mediaService.deleteCollection({
-      entityType: CLUB_ENTITY_TYPE,
-      entityId: clubId,
-      collection: COVER_COLLECTION,
-    });
-    await this.deleteGallery(clubId);
+  private async getGalleryIndices(clubId: string): Promise<number[]> {
+    const indices: number[] = [];
+    for (let index = 0; index < MAX_GALLERY; index += 1) {
+      const media = await this.mediaService.getCollection({
+        entityType: CLUB_ENTITY_TYPE,
+        entityId: clubId,
+        collection: `${GALLERY_PREFIX}${index}`,
+      });
+      if (media.length > 0) indices.push(index);
+    }
+    return indices;
   }
 
-  private async toListItem(club: ClubRow, viewerId: string): Promise<ClubListItem> {
+  /**
+   * Меняем только коллекции в БД: S3-ключи остаются неизменными, поэтому не
+   * требуется копировать тяжёлые файлы. Временные имена исключают конфликт
+   * уникального ключа (entityType, entityId, collection, variant) при обмене.
+   */
+  private async reorderGalleryCollections(clubId: string, order: number[]): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      for (const oldIndex of order) {
+        await tx.media.updateMany({
+          where: {
+            entityType: CLUB_ENTITY_TYPE,
+            entityId: clubId,
+            collection: `${GALLERY_PREFIX}${oldIndex}`,
+          },
+          data: { collection: `gallery-staging-${oldIndex}` },
+        });
+      }
+      for (let nextIndex = 0; nextIndex < order.length; nextIndex += 1) {
+        await tx.media.updateMany({
+          where: {
+            entityType: CLUB_ENTITY_TYPE,
+            entityId: clubId,
+            collection: `gallery-staging-${order[nextIndex]}`,
+          },
+          data: { collection: `${GALLERY_PREFIX}${nextIndex}` },
+        });
+      }
+    });
+  }
+
+  private async toListItem(
+    club: ClubRow,
+    viewerId: string,
+    canManage = club.ownerId === viewerId,
+  ): Promise<ClubListItem> {
     const coverMedia = await this.mediaService.getCollection({
       entityType: CLUB_ENTITY_TYPE,
       entityId: club.id,
@@ -856,11 +1088,14 @@ export class ClubsService {
       lat: club.lat,
       lng: club.lng,
       city: club.city,
+      tags: club.tags,
+      links: this.parseLinks(club.links),
       schedule: this.parseSchedule(club.schedule),
       isPublished: club.isPublished,
       coverUrl: coverUrls.card || coverUrls.original || coverUrls.cardThumb || null,
       galleryUrls: galleryUrls.filter(Boolean),
       isOwner: club.ownerId === viewerId,
+      canManage,
       createdAt: club.createdAt.toISOString(),
       updatedAt: club.updatedAt.toISOString(),
     };
