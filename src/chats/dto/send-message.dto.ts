@@ -18,4 +18,9 @@ export class SendMessageDto {
   @IsString({ message: 'Волна голосового сообщения указана неверно' })
   @MaxLength(2000, { message: 'Волна голосового сообщения слишком большая' })
   voiceWaveform?: string;
+
+  /** ID сообщения, на которое отвечаем (в этом же чате). */
+  @IsOptional()
+  @IsString()
+  replyToId?: string;
 }

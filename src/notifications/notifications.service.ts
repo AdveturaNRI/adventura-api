@@ -4,6 +4,7 @@ import { NotificationType } from '@prisma/client';
 import { ChatsService } from '../chats/chats.service';
 import { MediaService } from '../media/media.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PushSubscriptionsService } from '../push-subscriptions/push-subscriptions.service';
 import { RealtimeEmitter } from '../realtime/realtime.emitter';
 
 export type NotificationDto = {
@@ -38,6 +39,7 @@ export class NotificationsService {
     private readonly prisma: PrismaService,
     private readonly mediaService: MediaService,
     private readonly realtime: RealtimeEmitter,
+    private readonly pushSubscriptions: PushSubscriptionsService,
     @Inject(forwardRef(() => ChatsService))
     private readonly chatsService: ChatsService,
   ) {}
@@ -134,6 +136,7 @@ export class NotificationsService {
     const dto = await this.toDto(notification);
     this.realtime.emitNotificationNew(targetUserId, dto);
     await this.emitUnread(targetUserId);
+    void this.pushPortalNotification(targetUserId, dto);
     await this.chatsService.postFavoriteReceivedMessage(actorId, targetUserId);
     return dto;
   }
@@ -166,6 +169,7 @@ export class NotificationsService {
     const dto = await this.toDto(notification);
     this.realtime.emitNotificationNew(targetUserId, dto);
     await this.emitUnread(targetUserId);
+    void this.pushPortalNotification(targetUserId, dto);
     await this.chatsService.postFavoriteReceivedMessage(actorId, targetUserId);
     return dto;
   }
@@ -207,6 +211,7 @@ export class NotificationsService {
     const dto = await this.toDto(notification);
     this.realtime.emitNotificationNew(masterId, dto);
     await this.emitUnread(masterId);
+    void this.pushPortalNotification(masterId, dto);
     return dto;
   }
 
@@ -291,6 +296,7 @@ export class NotificationsService {
       const dto = await this.toDto(notification);
       this.realtime.emitNotificationNew(playerId, dto);
       await this.emitUnread(playerId);
+      void this.pushPortalNotification(playerId, dto);
       results.push(dto);
     }
 
@@ -378,7 +384,38 @@ export class NotificationsService {
     const dto = await this.toDto(notification);
     this.realtime.emitNotificationNew(applicantId, dto);
     await this.emitUnread(applicantId);
+    void this.pushPortalNotification(applicantId, dto);
     return dto;
+  }
+
+  private async pushPortalNotification(userId: string, dto: NotificationDto) {
+    const actorName = dto.actor.nickname;
+    const subject = dto.subject.trim();
+    let title = 'Adventura';
+    let body = `${actorName} ${dto.actionText}`.trim();
+    let url = '/notifications';
+    const tag = `notif:${dto.type}:${dto.refId || dto.actor.id}`;
+
+    if (dto.type === 'game_application') {
+      title = subject ? `Новая заявка на игру «${subject}»` : 'Новая заявка на игру';
+      body = actorName;
+      url = `/games-manage?id=${encodeURIComponent(dto.refId)}`;
+    } else if (
+      dto.type === 'game_application_accepted' ||
+      dto.type === 'game_application_rejected' ||
+      dto.type === 'game_player_removed' ||
+      dto.type === 'game_deleted'
+    ) {
+      title = subject || 'Игра';
+      body = `${actorName} ${dto.actionText}`.trim();
+      url = dto.refId ? `/games/${encodeURIComponent(dto.refId)}` : '/notifications';
+    } else if (dto.type === 'favorite_received' || dto.type === 'favorite_returned') {
+      title = actorName;
+      body = `${dto.actionText}${dto.messageText}`.trim();
+      url = `/users/${encodeURIComponent(dto.actor.id)}`;
+    }
+
+    await this.pushSubscriptions.sendToUser(userId, { title, body, tag, url });
   }
 
   private async emitUnread(userId: string) {

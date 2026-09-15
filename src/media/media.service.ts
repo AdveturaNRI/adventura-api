@@ -128,6 +128,51 @@ export class MediaService {
     return this.s3.getSignedObjectUrl(media.path);
   }
 
+  /** Copy all media rows for an entity onto another entity id (new S3 keys). */
+  async copyEntityMedia(
+    from: { entityType: string; entityId: string },
+    to: { entityType: string; entityId: string },
+  ): Promise<void> {
+    const existing = await this.prisma.media.findMany({
+      where: {
+        entityType: from.entityType,
+        entityId: from.entityId,
+      },
+      orderBy: [{ collection: 'asc' }, { variant: 'asc' }],
+    });
+
+    for (const item of existing) {
+      const buffer = await this.s3.getObjectBuffer(item.path);
+      const extension = item.path.split('.').pop() || 'bin';
+      const key = [
+        to.entityType.toLowerCase(),
+        to.entityId,
+        item.collection,
+        `${item.variant}.${extension}`,
+      ].join('/');
+
+      await this.s3.putObject({
+        key,
+        body: buffer,
+        contentType: item.mimeType,
+      });
+
+      await this.prisma.media.create({
+        data: {
+          entityType: to.entityType,
+          entityId: to.entityId,
+          collection: item.collection,
+          variant: item.variant,
+          mimeType: item.mimeType,
+          path: key,
+          width: item.width,
+          height: item.height,
+          size: item.size,
+        },
+      });
+    }
+  }
+
   async deleteCollection(entity: MediaEntityRef): Promise<void> {
     const existing = await this.getCollection(entity);
 

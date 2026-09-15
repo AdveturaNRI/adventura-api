@@ -17,7 +17,17 @@ import { ImageProcessorService } from '../image/image-processor.service';
 import type { ImageUrls } from '../image/image.types';
 import { MediaService } from '../media/media.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PushSubscriptionsService } from '../push-subscriptions/push-subscriptions.service';
 import { RealtimeEmitter } from '../realtime/realtime.emitter';
+import {
+  diceRollPreviewText,
+  parseDiceRollPayload,
+  redactDiceRollPayload,
+  rollDiceServerSide,
+  serializeDiceRollPayload,
+  validateDiceRollInput,
+} from './dice-roll.util';
+import type { SendDiceRollDto } from './dto/send-dice-roll.dto';
 
 const MESSAGE_ATTACHMENT_COLLECTION = 'attachment';
 const MESSAGE_ATTACHMENT_PREFIX = 'attachment-';
@@ -60,7 +70,8 @@ export type ChatMessageKind =
   | 'favorite_removed'
   | 'user_blocked'
   | 'user_unblocked'
-  | 'game_deleted';
+  | 'game_deleted'
+  | 'dice_roll';
 
 export type ChatMessageSender = {
   id: string;
@@ -79,6 +90,17 @@ export type ChatMessageDto = {
   image: ImageUrls | null;
   attachment: ChatAttachmentDto | null;
   attachments: ChatAttachmentDto[];
+  replyTo: {
+    id: string;
+    body: string | null;
+    senderNickname: string;
+    hasMedia: boolean;
+  } | null;
+  forwardedFrom: {
+    userId: string;
+    nickname: string;
+    messageId: string | null;
+  } | null;
 };
 
 export type ConversationListItem = {
@@ -104,6 +126,8 @@ export type ConversationListItem = {
   peerFavoritedMe: boolean;
   blockedByMe: boolean;
   blockedMe: boolean;
+  isPinned: boolean;
+  pinSortOrder: number | null;
   updatedAt: string;
 };
 
@@ -122,6 +146,9 @@ function toChatMessageKind(kind: MessageKind | undefined): ChatMessageKind {
   }
   if (kind === MessageKind.GAME_DELETED) {
     return 'game_deleted';
+  }
+  if (kind === MessageKind.DICE_ROLL) {
+    return 'dice_roll';
   }
   return 'user';
 }
@@ -171,6 +198,22 @@ function isHiddenForUser(hiddenAt: Date | null | undefined, lastCreatedAt: Date 
   return lastCreatedAt <= hiddenAt;
 }
 
+function sortConversationListItems(items: ConversationListItem[]): ConversationListItem[] {
+  return [...items].sort((left, right) => {
+    if (left.isPinned !== right.isPinned) {
+      return left.isPinned ? -1 : 1;
+    }
+    if (left.isPinned && right.isPinned) {
+      const leftOrder = left.pinSortOrder ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = right.pinSortOrder ?? Number.MAX_SAFE_INTEGER;
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
+      }
+    }
+    return right.updatedAt.localeCompare(left.updatedAt);
+  });
+}
+
 function uniqueIds(ids: string[]) {
   return [...new Set(ids)];
 }
@@ -182,6 +225,7 @@ export class ChatsService {
     private readonly mediaService: MediaService,
     private readonly imageProcessor: ImageProcessorService,
     private readonly realtime: RealtimeEmitter,
+    private readonly pushSubscriptions: PushSubscriptionsService,
   ) {}
 
   async findOrCreateWith(userId: string, peerUserId: string) {
@@ -1004,7 +1048,7 @@ export class ChatsService {
       const lastMessage = last
         ? {
             id: last.id,
-            body: last.body,
+            body: this.previewBodyForViewer(last.body, last.kind, last.senderId, userId),
             senderId: last.senderId,
             createdAt: last.createdAt.toISOString(),
             hasImage: attachmentKind === 'image',
@@ -1033,6 +1077,8 @@ export class ChatsService {
           peerFavoritedMe: false,
           blockedByMe: false,
           blockedMe: false,
+          isPinned: Boolean(myRead?.pinnedAt),
+          pinSortOrder: myRead?.pinSortOrder ?? null,
           updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
         });
         continue;
@@ -1069,11 +1115,124 @@ export class ChatsService {
         peerFavoritedMe: favoritedMeIds.has(peerUser.id) && !blockedByMe && !blockedMe,
         blockedByMe,
         blockedMe,
+        isPinned: Boolean(myRead?.pinnedAt),
+        pinSortOrder: myRead?.pinSortOrder ?? null,
         updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
       });
     }
 
-    return items;
+    return sortConversationListItems(items);
+  }
+
+  async pinConversation(userId: string, conversationId: string): Promise<ConversationListItem> {
+    await this.assertParticipant(userId, conversationId);
+
+    const existing = await this.prisma.conversationRead.findUnique({
+      where: { conversationId_userId: { conversationId, userId } },
+      select: { pinnedAt: true, pinSortOrder: true },
+    });
+    if (existing?.pinnedAt) {
+      return this.getConversationSummary(userId, conversationId);
+    }
+
+    const maxPinned = await this.prisma.conversationRead.aggregate({
+      where: { userId, pinnedAt: { not: null } },
+      _max: { pinSortOrder: true },
+    });
+    const nextOrder = (maxPinned._max.pinSortOrder ?? -1) + 1;
+    const now = new Date();
+
+    await this.prisma.conversationRead.upsert({
+      where: { conversationId_userId: { conversationId, userId } },
+      create: {
+        conversationId,
+        userId,
+        lastReadAt: now,
+        pinnedAt: now,
+        pinSortOrder: nextOrder,
+      },
+      update: {
+        pinnedAt: now,
+        pinSortOrder: nextOrder,
+        hiddenAt: null,
+      },
+    });
+
+    const summary = await this.getConversationSummary(userId, conversationId);
+    this.realtime.emitConversationUpdated([userId], summary);
+    return summary;
+  }
+
+  async unpinConversation(userId: string, conversationId: string): Promise<ConversationListItem> {
+    await this.assertParticipant(userId, conversationId);
+
+    await this.prisma.conversationRead.upsert({
+      where: { conversationId_userId: { conversationId, userId } },
+      create: {
+        conversationId,
+        userId,
+        lastReadAt: new Date(),
+        pinnedAt: null,
+        pinSortOrder: null,
+      },
+      update: {
+        pinnedAt: null,
+        pinSortOrder: null,
+      },
+    });
+
+    const remaining = await this.prisma.conversationRead.findMany({
+      where: { userId, pinnedAt: { not: null } },
+      orderBy: [{ pinSortOrder: 'asc' }, { pinnedAt: 'asc' }],
+      select: { conversationId: true },
+    });
+    await Promise.all(
+      remaining.map((row, index) =>
+        this.prisma.conversationRead.update({
+          where: {
+            conversationId_userId: { conversationId: row.conversationId, userId },
+          },
+          data: { pinSortOrder: index },
+        }),
+      ),
+    );
+
+    const summary = await this.getConversationSummary(userId, conversationId);
+    this.realtime.emitConversationUpdated([userId], summary);
+    return summary;
+  }
+
+  async reorderPinnedConversations(
+    userId: string,
+    conversationIds: string[],
+  ): Promise<ConversationListItem[]> {
+    const unique = uniqueIds(conversationIds.map((id) => id.trim()).filter(Boolean));
+    if (unique.length === 0) {
+      throw new BadRequestException('Нечего упорядочивать');
+    }
+
+    const pinned = await this.prisma.conversationRead.findMany({
+      where: { userId, pinnedAt: { not: null } },
+      select: { conversationId: true },
+    });
+    const pinnedIds = new Set(pinned.map((row) => row.conversationId));
+    if (unique.some((id) => !pinnedIds.has(id))) {
+      throw new BadRequestException('Можно менять порядок только у закреплённых чатов');
+    }
+    if (unique.length !== pinnedIds.size) {
+      throw new BadRequestException('Передайте все закреплённые чаты в новом порядке');
+    }
+
+    await this.prisma.$transaction(
+      unique.map((conversationId, index) =>
+        this.prisma.conversationRead.update({
+          where: { conversationId_userId: { conversationId, userId } },
+          data: { pinSortOrder: index },
+        }),
+      ),
+    );
+
+    return this.listConversations(userId);
   }
 
   async listMessages(
@@ -1118,7 +1277,9 @@ export class ChatsService {
 
     const hasMore = messages.length > limit;
     const page = hasMore ? messages.slice(0, limit) : messages;
-    const dtos = await Promise.all(page.map((message) => this.toMessageDto(message)));
+    const dtos = await Promise.all(
+      page.map((message) => this.toMessageDto(message, userId)),
+    );
 
     if (conversation.type === ConversationType.GROUP) {
       return {
@@ -1151,6 +1312,7 @@ export class ChatsService {
     conversationId: string,
     body: string | undefined,
     files: Express.Multer.File[] = [],
+    replyToId?: string,
     voice?: { voiceDurationSec?: number; voiceWaveform?: string },
   ) {
     const conversation = await this.assertParticipant(userId, conversationId);
@@ -1182,6 +1344,7 @@ export class ChatsService {
       throw new BadRequestException('Сообщение не может быть пустым');
     }
 
+    const replyMeta = await this.resolveReplyMeta(conversationId, replyToId);
     const attachmentName = uploads[0]?.originalname?.trim() || null;
     const message = await this.prisma.message.create({
       data: {
@@ -1189,6 +1352,14 @@ export class ChatsService {
         senderId: userId,
         body: trimmed,
         attachmentName,
+        ...(replyMeta
+          ? {
+              replyToId: replyMeta.id,
+              replyToBody: replyMeta.body,
+              replyToSenderNickname: replyMeta.senderNickname,
+              replyToHasMedia: replyMeta.hasMedia,
+            }
+          : {}),
       },
     });
 
@@ -1218,6 +1389,200 @@ export class ChatsService {
       }
     }
 
+    await this.afterMessageCreated(userId, conversationId, participantIds, message.id);
+    return this.toMessageDto(message, userId);
+  }
+
+  async sendDiceRoll(userId: string, conversationId: string, dto: SendDiceRollDto) {
+    const conversation = await this.assertParticipant(userId, conversationId);
+    const participantIds = await this.getParticipantIds(conversationId);
+
+    if (conversation.type === ConversationType.DIRECT) {
+      const peerId = this.directPeerId(conversation, userId);
+      const blockedMe = await this.prisma.userBlock.findUnique({
+        where: {
+          blockerId_blockedId: { blockerId: peerId, blockedId: userId },
+        },
+        select: { id: true },
+      });
+      if (blockedMe) {
+        throw new ForbiddenException('Вас заблокировали. Отправлять сообщения нельзя.');
+      }
+    }
+
+    const modifier = dto.modifier ?? 0;
+    const validationError = validateDiceRollInput(dto.dice, modifier);
+    if (validationError) {
+      throw new BadRequestException(validationError);
+    }
+
+    const payload = rollDiceServerSide(dto.dice, modifier);
+    payload.hidden = Boolean(dto.hidden);
+
+    const message = await this.prisma.message.create({
+      data: {
+        conversationId,
+        senderId: userId,
+        body: serializeDiceRollPayload(payload),
+        kind: MessageKind.DICE_ROLL,
+      },
+    });
+
+    await this.afterMessageCreated(userId, conversationId, participantIds, message.id);
+    return this.toMessageDto(message, userId);
+  }
+
+  async forwardMessages(
+    userId: string,
+    targetConversationId: string,
+    messageIds: string[],
+  ): Promise<ChatMessageDto[]> {
+    await this.assertParticipant(userId, targetConversationId);
+    const uniqueIds = [...new Set(messageIds.map((id) => id.trim()).filter(Boolean))];
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('Нечего пересылать');
+    }
+    if (uniqueIds.length > 20) {
+      throw new BadRequestException('За раз можно переслать не больше 20 сообщений');
+    }
+
+    const sources = await this.prisma.message.findMany({
+      where: {
+        id: { in: uniqueIds },
+        kind: { in: [MessageKind.USER, MessageKind.DICE_ROLL] },
+      },
+      include: {
+        sender: { select: { id: true, nickname: true } },
+      },
+    });
+
+    if (sources.length !== uniqueIds.length) {
+      throw new NotFoundException('Часть сообщений не найдена');
+    }
+
+    const byId = new Map(sources.map((item) => [item.id, item]));
+    const ordered = uniqueIds.map((id) => byId.get(id)!);
+
+    const sourceConversationIds = [...new Set(ordered.map((item) => item.conversationId))];
+    await Promise.all(
+      sourceConversationIds.map((id) => this.assertParticipant(userId, id)),
+    );
+
+    const target = await this.assertParticipant(userId, targetConversationId);
+    if (target.type === ConversationType.DIRECT) {
+      const peerId = this.directPeerId(target, userId);
+      const blockedMe = await this.prisma.userBlock.findUnique({
+        where: {
+          blockerId_blockedId: { blockerId: peerId, blockedId: userId },
+        },
+        select: { id: true },
+      });
+      if (blockedMe) {
+        throw new ForbiddenException('Вас заблокировали. Отправлять сообщения нельзя.');
+      }
+    }
+
+    const participantIds = await this.getParticipantIds(targetConversationId);
+    const created: ChatMessageDto[] = [];
+
+    for (const source of ordered) {
+      const hasMedia =
+        Boolean(source.attachmentName) ||
+        (await this.prisma.media.count({
+          where: { entityType: 'Message', entityId: source.id },
+        })) > 0;
+
+      if (!source.body?.trim() && !hasMedia) {
+        continue;
+      }
+
+      let body = source.body;
+      if (source.kind === MessageKind.DICE_ROLL) {
+        const payload = parseDiceRollPayload(source.body);
+        if (!payload) {
+          continue;
+        }
+        // Чужой скрытый бросок нельзя «раскрыть» пересылкой — уходит только заглушка.
+        if (payload.hidden && source.senderId !== userId) {
+          body = serializeDiceRollPayload(redactDiceRollPayload(payload));
+        }
+      }
+
+      const message = await this.prisma.message.create({
+        data: {
+          conversationId: targetConversationId,
+          senderId: userId,
+          body,
+          attachmentName: source.attachmentName,
+          kind: source.kind,
+          forwardedFromUserId: source.senderId,
+          forwardedFromNickname: source.sender.nickname,
+          forwardedFromMessageId: source.id,
+        },
+      });
+
+      if (hasMedia) {
+        await this.mediaService.copyEntityMedia(
+          { entityType: 'Message', entityId: source.id },
+          { entityType: 'Message', entityId: message.id },
+        );
+      }
+
+      await this.afterMessageCreated(userId, targetConversationId, participantIds, message.id);
+      created.push(await this.toMessageDto(message, userId));
+    }
+
+    if (created.length === 0) {
+      throw new BadRequestException('Нечего пересылать');
+    }
+
+    return created;
+  }
+
+  private async resolveReplyMeta(conversationId: string, replyToId?: string) {
+    const id = replyToId?.trim();
+    if (!id) {
+      return null;
+    }
+
+    const replyTo = await this.prisma.message.findFirst({
+      where: {
+        id,
+        conversationId,
+        kind: { in: [MessageKind.USER, MessageKind.DICE_ROLL] },
+      },
+      include: { sender: { select: { nickname: true } } },
+    });
+    if (!replyTo) {
+      throw new BadRequestException('Сообщение для ответа не найдено в этом чате');
+    }
+
+    const hasMedia =
+      Boolean(replyTo.attachmentName) ||
+      (await this.prisma.media.count({
+        where: { entityType: 'Message', entityId: replyTo.id },
+      })) > 0;
+
+    let body = replyTo.body;
+    if (replyTo.kind === MessageKind.DICE_ROLL) {
+      const payload = parseDiceRollPayload(replyTo.body);
+      body = diceRollPreviewText(payload, { isSender: true });
+    }
+
+    return {
+      id: replyTo.id,
+      body,
+      senderNickname: replyTo.sender.nickname,
+      hasMedia,
+    };
+  }
+
+  private async afterMessageCreated(
+    userId: string,
+    conversationId: string,
+    participantIds: string[],
+    messageId: string,
+  ) {
     const now = new Date();
     await this.prisma.$transaction([
       this.prisma.conversation.update({
@@ -1249,8 +1614,16 @@ export class ChatsService {
         ),
     ]);
 
-    const dto = await this.toMessageDto(message);
-    this.realtime.emitMessageNew(participantIds, dto);
+    const message = await this.prisma.message.findUniqueOrThrow({
+      where: { id: messageId },
+    });
+
+    await Promise.all(
+      participantIds.map(async (id) => {
+        const dto = await this.toMessageDto(message, id);
+        this.realtime.emitMessageNew([id], dto);
+      }),
+    );
 
     await Promise.all(
       participantIds.map(async (id) => {
@@ -1260,8 +1633,66 @@ export class ChatsService {
     );
 
     await this.emitUnreadForUsers(participantIds);
+    void this.pushNewChatMessage(userId, conversationId, participantIds, message);
+  }
 
-    return dto;
+  private async pushNewChatMessage(
+    senderId: string,
+    conversationId: string,
+    participantIds: string[],
+    message: {
+      body: string | null;
+      kind: MessageKind;
+      attachmentName: string | null;
+    },
+  ) {
+    const kind = toChatMessageKind(message.kind);
+    if (kind !== 'user' && kind !== 'dice_roll') {
+      return;
+    }
+
+    const recipients = participantIds.filter((id) => id !== senderId);
+    if (recipients.length === 0) {
+      return;
+    }
+
+    const [sender, conversation] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: senderId },
+        select: { nickname: true },
+      }),
+      this.prisma.conversation.findUnique({
+        where: { id: conversationId },
+        select: { type: true, title: true },
+      }),
+    ]);
+
+    const senderName = sender?.nickname?.trim() || 'Сообщение';
+    const isGroup = conversation?.type === ConversationType.GROUP;
+    const title =
+      isGroup && conversation?.title?.trim()
+        ? conversation.title.trim()
+        : senderName;
+
+    let body: string;
+    if (kind === 'dice_roll') {
+      body = `${senderName}: бросок кубиков`;
+    } else if (message.body?.trim()) {
+      body = isGroup ? `${senderName}: ${message.body.trim()}` : message.body.trim();
+    } else if (message.attachmentName) {
+      body = isGroup ? `${senderName}: вложение` : 'Вложение';
+    } else {
+      body = isGroup ? `${senderName}: новое сообщение` : 'Новое сообщение';
+    }
+
+    const payload = {
+      title,
+      body,
+      tag: `chat:${conversationId}`,
+      url: `/chats/${encodeURIComponent(conversationId)}`,
+    };
+
+    await Promise.all(recipients.map((id) => this.pushSubscriptions.sendToUser(id, payload)));
   }
 
   async markRead(userId: string, conversationId: string) {
@@ -1462,7 +1893,7 @@ export class ChatsService {
     const lastMessage = last
       ? {
           id: last.id,
-          body: last.body,
+          body: this.previewBodyForViewer(last.body, last.kind, last.senderId, userId),
           senderId: last.senderId,
           createdAt: last.createdAt.toISOString(),
           hasImage: attachmentKind === 'image',
@@ -1491,6 +1922,8 @@ export class ChatsService {
         peerFavoritedMe: false,
         blockedByMe: false,
         blockedMe: false,
+        isPinned: Boolean(myRead?.pinnedAt),
+        pinSortOrder: myRead?.pinSortOrder ?? null,
         updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
       };
     }
@@ -1541,6 +1974,8 @@ export class ChatsService {
         peerFavorite?.type === 'FAVORITE' && !flags.blockedByMe && !flags.blockedMe,
       blockedByMe: flags.blockedByMe,
       blockedMe: flags.blockedMe,
+      isPinned: Boolean(myRead?.pinnedAt),
+      pinSortOrder: myRead?.pinSortOrder ?? null,
       updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
     };
   }
@@ -1836,15 +2271,62 @@ export class ChatsService {
     return attachments[0]?.kind ?? null;
   }
 
-  private async toMessageDto(message: {
-    id: string;
-    conversationId: string;
-    senderId: string;
-    body: string | null;
-    attachmentName?: string | null;
-    kind?: MessageKind;
-    createdAt: Date;
-  }): Promise<ChatMessageDto> {
+  private previewBodyForViewer(
+    body: string | null,
+    kind: MessageKind | undefined,
+    senderId: string,
+    viewerId: string,
+  ): string | null {
+    if (kind !== MessageKind.DICE_ROLL) {
+      return body;
+    }
+    const payload = parseDiceRollPayload(body);
+    if (!payload) {
+      return 'Бросок костей';
+    }
+    const forViewer =
+      payload.hidden && senderId !== viewerId ? redactDiceRollPayload(payload) : payload;
+    return diceRollPreviewText(forViewer, { isSender: senderId === viewerId });
+  }
+
+  private bodyForViewer(
+    body: string | null,
+    kind: MessageKind | undefined,
+    senderId: string,
+    viewerId?: string,
+  ): string | null {
+    if (kind !== MessageKind.DICE_ROLL || !viewerId) {
+      return body;
+    }
+    const payload = parseDiceRollPayload(body);
+    if (!payload) {
+      return body;
+    }
+    if (payload.hidden && senderId !== viewerId) {
+      return serializeDiceRollPayload(redactDiceRollPayload(payload));
+    }
+    return body;
+  }
+
+  private async toMessageDto(
+    message: {
+      id: string;
+      conversationId: string;
+      senderId: string;
+      body: string | null;
+      attachmentName?: string | null;
+      kind?: MessageKind;
+      createdAt: Date;
+      replyToId?: string | null;
+      replyToBody?: string | null;
+      replyToSenderNickname?: string | null;
+      replyToHasMedia?: boolean | null;
+      forwardedFromUserId?: string | null;
+      forwardedFromNickname?: string | null;
+      forwardedFromMessageId?: string | null;
+    },
+    viewerId?: string,
+  ): Promise<ChatMessageDto> {
     const senderUser = await this.prisma.user.findUnique({
       where: { id: message.senderId },
       select: { id: true, nickname: true },
@@ -1867,12 +2349,28 @@ export class ChatsService {
       conversationId: message.conversationId,
       senderId: message.senderId,
       sender,
-      body: message.body,
+      body: this.bodyForViewer(message.body, message.kind, message.senderId, viewerId),
       kind: messageKind,
       createdAt: message.createdAt.toISOString(),
       image: primary?.image ?? null,
       attachment: primary,
       attachments,
+      replyTo: message.replyToId
+        ? {
+            id: message.replyToId,
+            body: message.replyToBody ?? null,
+            senderNickname: message.replyToSenderNickname?.trim() || 'Игрок',
+            hasMedia: Boolean(message.replyToHasMedia),
+          }
+        : null,
+      forwardedFrom:
+        message.forwardedFromUserId && message.forwardedFromNickname
+          ? {
+              userId: message.forwardedFromUserId,
+              nickname: message.forwardedFromNickname,
+              messageId: message.forwardedFromMessageId ?? null,
+            }
+          : null,
     };
   }
 

@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Post,
+  Put,
   Query,
   UploadedFiles,
   UseGuards,
@@ -19,7 +20,10 @@ import type { AuthUser } from '../auth/types/auth-response.type';
 import { MAX_UPLOAD_FILE_SIZE_BYTES } from '../common/upload.constants';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { DeleteConversationQueryDto } from './dto/delete-conversation.dto';
+import { ForwardMessagesDto } from './dto/forward-messages.dto';
 import { ListMessagesQueryDto } from './dto/list-messages.dto';
+import { ReorderPinnedChatsDto } from './dto/reorder-pinned-chats.dto';
+import { SendDiceRollDto } from './dto/send-dice-roll.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { ChatsService } from './chats.service';
 
@@ -31,6 +35,11 @@ export class ChatsController {
   @Get()
   list(@CurrentUser() user: AuthUser) {
     return this.chatsService.listConversations(user.id);
+  }
+
+  @Put('pins/order')
+  reorderPinned(@CurrentUser() user: AuthUser, @Body() dto: ReorderPinnedChatsDto) {
+    return this.chatsService.reorderPinnedConversations(user.id, dto.conversationIds);
   }
 
   @Post('groups')
@@ -51,6 +60,16 @@ export class ChatsController {
   @Delete('with/:userId/block')
   unblockPeerByUserId(@CurrentUser() user: AuthUser, @Param('userId') peerUserId: string) {
     return this.chatsService.unblockPeerByUserId(user.id, peerUserId);
+  }
+
+  @Post(':id/pin')
+  pin(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+    return this.chatsService.pinConversation(user.id, conversationId);
+  }
+
+  @Delete(':id/pin')
+  unpin(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+    return this.chatsService.unpinConversation(user.id, conversationId);
   }
 
   @Get(':id/members')
@@ -101,10 +120,35 @@ export class ChatsController {
     },
   ) {
     const files = [...(uploaded?.files ?? []), ...(uploaded?.file ?? [])];
-    return this.chatsService.sendMessage(user.id, conversationId, dto.body, files, {
-      voiceDurationSec: dto.voiceDurationSec,
-      voiceWaveform: dto.voiceWaveform,
-    });
+    return this.chatsService.sendMessage(
+      user.id,
+      conversationId,
+      dto.body,
+      files,
+      dto.replyToId,
+      {
+        voiceDurationSec: dto.voiceDurationSec,
+        voiceWaveform: dto.voiceWaveform,
+      },
+    );
+  }
+
+  @Post(':id/dice-rolls')
+  sendDiceRoll(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Body() dto: SendDiceRollDto,
+  ) {
+    return this.chatsService.sendDiceRoll(user.id, conversationId, dto);
+  }
+
+  @Post(':id/forward')
+  forwardMessages(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Body() dto: ForwardMessagesDto,
+  ) {
+    return this.chatsService.forwardMessages(user.id, conversationId, dto.messageIds);
   }
 
   @Post(':id/read')

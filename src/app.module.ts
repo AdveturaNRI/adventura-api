@@ -2,12 +2,14 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
 import { AuthModule } from './auth/auth.module';
+import { ArtStudioModule } from './art-studio/art-studio.module';
 import { ChatsModule } from './chats/chats.module';
 import { ClubsModule } from './clubs/clubs.module';
 import { GamesModule } from './games/games.module';
 import { HealthModule } from './health/health.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { PushSubscriptionsModule } from './push-subscriptions/push-subscriptions.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { ReferenceModule } from './reference/reference.module';
 import { StorageModule } from './storage/storage.module';
@@ -27,8 +29,10 @@ import { UsersModule } from './users/users.module';
     RealtimeModule,
     ChatsModule,
     NotificationsModule,
+    PushSubscriptionsModule,
     GamesModule,
     ClubsModule,
+    ArtStudioModule,
   ],
 })
 export class AppModule {}

@@ -82,6 +82,22 @@ export class S3Service implements OnModuleInit {
     );
   }
 
+  async getObjectBuffer(key: string): Promise<Buffer> {
+    const normalized = key.replace(/^\/+/, '').replace(/\\/g, '/');
+    const result = await this.client.send(
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: normalized,
+      }),
+    );
+    const body = result.Body;
+    if (!body) {
+      throw new Error(`S3 object empty: ${normalized}`);
+    }
+    const bytes = await body.transformToByteArray();
+    return Buffer.from(bytes);
+  }
+
   async putObject(params: {
     key: string;
     body: Buffer;
