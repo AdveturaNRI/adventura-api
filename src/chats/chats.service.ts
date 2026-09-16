@@ -21,6 +21,7 @@ import { PushSubscriptionsService } from '../push-subscriptions/push-subscriptio
 import { RealtimeEmitter } from '../realtime/realtime.emitter';
 import {
   diceRollPreviewText,
+  buildDicePayloadFromClient,
   parseDiceRollPayload,
   redactDiceRollPayload,
   rollDiceServerSide,
@@ -1416,7 +1417,16 @@ export class ChatsService {
       throw new BadRequestException(validationError);
     }
 
-    const payload = rollDiceServerSide(dto.dice, modifier, dto.color);
+    const payload =
+      dto.groups && dto.groups.length > 0
+        ? (() => {
+            const built = buildDicePayloadFromClient(dto.dice, dto.groups, modifier, dto.color);
+            if (typeof built === 'string') {
+              throw new BadRequestException(built);
+            }
+            return built;
+          })()
+        : rollDiceServerSide(dto.dice, modifier, dto.color);
     payload.hidden = Boolean(dto.hidden);
 
     const message = await this.prisma.message.create({

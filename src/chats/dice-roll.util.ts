@@ -78,6 +78,65 @@ export function formatDiceFormula(dice: DiceRollDieInput[], modifier = 0) {
   return modifier > 0 ? `${base} + ${modifier}` : `${base} − ${Math.abs(modifier)}`;
 }
 
+export type DiceRollClientGroupInput = {
+  sides: number;
+  values: number[];
+};
+
+/** Собрать payload из клиентского броска (фронт — источник истины). */
+export function buildDicePayloadFromClient(
+  dice: DiceRollDieInput[],
+  groupsInput: DiceRollClientGroupInput[],
+  modifier = 0,
+  color?: string,
+): DiceRollPayload | string {
+  const expected = [...dice].sort((a, b) => a.sides - b.sides);
+  if (!Array.isArray(groupsInput) || groupsInput.length !== expected.length) {
+    return 'Раскладка кубов не совпадает с формулой';
+  }
+
+  const groups: DiceRollGroupPayload[] = [];
+  const values: number[] = [];
+
+  for (let i = 0; i < expected.length; i += 1) {
+    const die = expected[i];
+    const group = groupsInput[i];
+    if (!group || group.sides !== die.sides) {
+      return 'Тип кубика в раскладке не совпадает';
+    }
+    if (!Array.isArray(group.values) || group.values.length !== die.qty) {
+      return 'Число граней в раскладке не совпадает';
+    }
+    const rolled: number[] = [];
+    for (const raw of group.values) {
+      if (!Number.isInteger(raw) || raw < 1 || raw > die.sides) {
+        return `Значение кубика d${die.sides} вне диапазона`;
+      }
+      rolled.push(raw);
+      values.push(raw);
+    }
+    groups.push({
+      sides: die.sides,
+      values: rolled,
+      sum: rolled.reduce((a, b) => a + b, 0),
+    });
+  }
+
+  const diceSum = values.reduce((a, b) => a + b, 0);
+  const normalizedColor = normalizeDiceColor(color);
+  return {
+    v: DICE_ROLL_PAYLOAD_VERSION,
+    formula: formatDiceFormula(dice, modifier),
+    modifier,
+    groups,
+    values,
+    sum: diceSum + modifier,
+    hidden: false,
+    ...(normalizedColor ? { color: normalizedColor } : {}),
+  };
+}
+
+/** Fallback, если клиент не прислал раскладку (старые клиенты). */
 export function rollDiceServerSide(
   dice: DiceRollDieInput[],
   modifier = 0,

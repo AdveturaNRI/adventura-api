@@ -26,6 +26,21 @@ export class DiceRollDieDto {
   qty!: number;
 }
 
+/** Раскладка с клиента (3D-бросок на фронте). */
+export class DiceRollClientGroupDto {
+  @IsInt()
+  @IsIn([...ALLOWED_SIDES])
+  sides!: number;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(8)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  @Max(100, { each: true })
+  values!: number[];
+}
+
 export class SendDiceRollDto {
   @IsArray()
   @ArrayMinSize(1)
@@ -48,4 +63,13 @@ export class SendDiceRollDto {
   @IsOptional()
   @Matches(/^#[0-9A-Fa-f]{6}$/)
   color?: string;
+
+  /** Итог броска с фронта — источник истины. Без поля сервер бросает сам (legacy). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(7)
+  @ValidateNested({ each: true })
+  @Type(() => DiceRollClientGroupDto)
+  groups?: DiceRollClientGroupDto[];
 }
