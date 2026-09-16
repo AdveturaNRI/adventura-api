@@ -1412,7 +1412,8 @@ export class ChatsService {
     }
 
     const modifier = dto.modifier ?? 0;
-    const validationError = validateDiceRollInput(dto.dice, modifier);
+    const mode = dto.mode ?? 'normal';
+    const validationError = validateDiceRollInput(dto.dice, modifier, mode);
     if (validationError) {
       throw new BadRequestException(validationError);
     }
@@ -1420,13 +1421,19 @@ export class ChatsService {
     const payload =
       dto.groups && dto.groups.length > 0
         ? (() => {
-            const built = buildDicePayloadFromClient(dto.dice, dto.groups, modifier, dto.color);
+            const built = buildDicePayloadFromClient(
+              dto.dice,
+              dto.groups,
+              modifier,
+              dto.color,
+              mode,
+            );
             if (typeof built === 'string') {
               throw new BadRequestException(built);
             }
             return built;
           })()
-        : rollDiceServerSide(dto.dice, modifier, dto.color);
+        : rollDiceServerSide(dto.dice, modifier, dto.color, mode);
     payload.hidden = Boolean(dto.hidden);
 
     const message = await this.prisma.message.create({

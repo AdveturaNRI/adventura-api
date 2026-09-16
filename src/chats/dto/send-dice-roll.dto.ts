@@ -72,4 +72,9 @@ export class SendDiceRollDto {
   @ValidateNested({ each: true })
   @Type(() => DiceRollClientGroupDto)
   groups?: DiceRollClientGroupDto[];
+
+  /** Преимущество / помеха — только вместе с 2d20. */
+  @IsOptional()
+  @IsIn(['normal', 'advantage', 'disadvantage'])
+  mode?: 'normal' | 'advantage' | 'disadvantage';
 }

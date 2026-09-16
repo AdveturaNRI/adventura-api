@@ -8,6 +8,8 @@ export type DiceRollGroupPayload = {
   sum: number;
 };
 
+export type DiceRollMode = 'normal' | 'advantage' | 'disadvantage';
+
 export type DiceRollPayload = {
   v: typeof DICE_ROLL_PAYLOAD_VERSION;
   formula: string;
@@ -20,6 +22,7 @@ export type DiceRollPayload = {
   redacted?: boolean;
   /** Hex `#RRGGBB` цвета кубов отправителя. */
   color?: string;
+  mode?: DiceRollMode;
 };
 
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
@@ -44,7 +47,11 @@ const ALLOWED_SIDES = new Set([4, 6, 8, 10, 12, 20, 100]);
 const MAX_PER_DIE = 8;
 const MAX_TOTAL = 12;
 
-export function validateDiceRollInput(dice: DiceRollDieInput[], modifier = 0) {
+export function validateDiceRollInput(
+  dice: DiceRollDieInput[],
+  modifier = 0,
+  mode: DiceRollMode = 'normal',
+) {
   if (!Array.isArray(dice) || dice.length === 0) {
     return 'Выберите хотя бы один кубик';
   }
@@ -64,18 +71,74 @@ export function validateDiceRollInput(dice: DiceRollDieInput[], modifier = 0) {
   if (!Number.isInteger(modifier) || modifier < -99 || modifier > 99) {
     return 'Модификатор от −99 до 99';
   }
+  if (mode === 'advantage' || mode === 'disadvantage') {
+    if (dice.length !== 1 || dice[0]?.sides !== 20 || dice[0]?.qty !== 2) {
+      return 'Преимущество и помеха — только 2d20';
+    }
+  }
   return null;
 }
 
-export function formatDiceFormula(dice: DiceRollDieInput[], modifier = 0) {
+export function formatDiceFormula(
+  dice: DiceRollDieInput[],
+  modifier = 0,
+  mode: DiceRollMode = 'normal',
+) {
+  if (mode === 'advantage' || mode === 'disadvantage') {
+    const base = '1d20';
+    if (modifier === 0) {
+      return base;
+    }
+    return modifier > 0 ? `${base} + ${modifier}` : `${base} − ${Math.abs(modifier)}`;
+  }
+
   const parts = [...dice]
     .sort((a, b) => a.sides - b.sides)
     .map((die) => `${die.qty}d${die.sides}`);
-  const base = parts.join(' + ');
+  let base = parts.join(' + ');
   if (modifier === 0) {
     return base;
   }
   return modifier > 0 ? `${base} + ${modifier}` : `${base} − ${Math.abs(modifier)}`;
+}
+
+function normalizeMode(mode: DiceRollMode | null | undefined): DiceRollMode {
+  return mode === 'advantage' || mode === 'disadvantage' ? mode : 'normal';
+}
+
+function collectD20Values(groups: { sides: number; values: number[] }[]): number[] {
+  return groups.filter((item) => item.sides === 20).flatMap((item) => item.values);
+}
+
+function totalFromGroups(
+  groups: DiceRollGroupPayload[],
+  values: number[],
+  modifier: number,
+  mode: DiceRollMode,
+): { groups: DiceRollGroupPayload[]; sum: number } {
+  if (mode === 'advantage' || mode === 'disadvantage') {
+    const d20Values = collectD20Values(groups);
+    if (d20Values.length >= 2) {
+      const kept =
+        mode === 'advantage' ? Math.max(...d20Values) : Math.min(...d20Values);
+      const otherGroups = groups.filter((item) => item.sides !== 20);
+      return {
+        groups: [
+          ...otherGroups,
+          {
+            sides: 20,
+            values: d20Values,
+            sum: kept,
+          },
+        ],
+        sum: kept + modifier,
+      };
+    }
+  }
+  return {
+    groups,
+    sum: values.reduce((a, b) => a + b, 0) + modifier,
+  };
 }
 
 export type DiceRollClientGroupInput = {
@@ -89,7 +152,9 @@ export function buildDicePayloadFromClient(
   groupsInput: DiceRollClientGroupInput[],
   modifier = 0,
   color?: string,
+  mode: DiceRollMode = 'normal',
 ): DiceRollPayload | string {
+  const resolvedMode = normalizeMode(mode);
   const expected = [...dice].sort((a, b) => a.sides - b.sides);
   if (!Array.isArray(groupsInput) || groupsInput.length !== expected.length) {
     return 'Раскладка кубов не совпадает с формулой';
@@ -122,17 +187,18 @@ export function buildDicePayloadFromClient(
     });
   }
 
-  const diceSum = values.reduce((a, b) => a + b, 0);
+  const resolved = totalFromGroups(groups, values, modifier, resolvedMode);
   const normalizedColor = normalizeDiceColor(color);
   return {
     v: DICE_ROLL_PAYLOAD_VERSION,
-    formula: formatDiceFormula(dice, modifier),
+    formula: formatDiceFormula(dice, modifier, resolvedMode),
     modifier,
-    groups,
+    groups: resolved.groups,
     values,
-    sum: diceSum + modifier,
+    sum: resolved.sum,
     hidden: false,
     ...(normalizedColor ? { color: normalizedColor } : {}),
+    ...(resolvedMode !== 'normal' ? { mode: resolvedMode } : {}),
   };
 }
 
@@ -141,7 +207,9 @@ export function rollDiceServerSide(
   dice: DiceRollDieInput[],
   modifier = 0,
   color?: string,
+  mode: DiceRollMode = 'normal',
 ): DiceRollPayload {
+  const resolvedMode = normalizeMode(mode);
   const groups: DiceRollGroupPayload[] = [];
   const values: number[] = [];
 
@@ -159,17 +227,18 @@ export function rollDiceServerSide(
     });
   }
 
-  const diceSum = values.reduce((a, b) => a + b, 0);
+  const resolved = totalFromGroups(groups, values, modifier, resolvedMode);
   const normalizedColor = normalizeDiceColor(color);
   return {
     v: DICE_ROLL_PAYLOAD_VERSION,
-    formula: formatDiceFormula(dice, modifier),
+    formula: formatDiceFormula(dice, modifier, resolvedMode),
     modifier,
-    groups,
+    groups: resolved.groups,
     values,
-    sum: diceSum + modifier,
+    sum: resolved.sum,
     hidden: false,
     ...(normalizedColor ? { color: normalizedColor } : {}),
+    ...(resolvedMode !== 'normal' ? { mode: resolvedMode } : {}),
   };
 }
 
@@ -187,6 +256,7 @@ export function parseDiceRollPayload(body: string | null | undefined): DiceRollP
       return null;
     }
     const color = normalizeDiceColor(parsed.color);
+    const mode = normalizeMode(parsed.mode);
     return {
       v: DICE_ROLL_PAYLOAD_VERSION,
       formula: parsed.formula,
@@ -197,6 +267,7 @@ export function parseDiceRollPayload(body: string | null | undefined): DiceRollP
       hidden: Boolean(parsed.hidden),
       redacted: Boolean(parsed.redacted),
       ...(color ? { color } : {}),
+      ...(mode !== 'normal' ? { mode } : {}),
     };
   } catch {
     return null;
@@ -215,6 +286,7 @@ export function redactDiceRollPayload(payload: DiceRollPayload): DiceRollPayload
     hidden: true,
     redacted: true,
     ...(payload.color ? { color: payload.color } : {}),
+    ...(payload.mode && payload.mode !== 'normal' ? { mode: payload.mode } : {}),
   };
 }
 
