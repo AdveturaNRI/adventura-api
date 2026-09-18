@@ -936,32 +936,37 @@ export async function setupAdmin(
   AdminJS.registerAdapter({ Database, Resource });
 
   const componentLoader = new ComponentLoader();
-  const dashboardCandidates = [
-    join(process.cwd(), 'src/admin/analytics-dashboard'),
-    join(process.cwd(), 'dist/admin/analytics-dashboard'),
-    join(__dirname, 'analytics-dashboard'),
-  ];
-  const dashboardPath =
-    dashboardCandidates.find((candidate) =>
-      existsSync(`${candidate}.jsx`) || existsSync(candidate),
-    ) ?? dashboardCandidates[0];
+
+  const resolveAdminComponent = (name: string) => {
+    const candidates = [
+      // Next to compiled setup-admin.js (dist/src/admin) — preferred in Docker.
+      join(__dirname, name),
+      join(process.cwd(), 'dist/src/admin', name),
+      join(process.cwd(), 'dist/admin', name),
+      join(process.cwd(), 'src/admin', name),
+    ];
+    const found = candidates.find(
+      (candidate) =>
+        existsSync(`${candidate}.jsx`) ||
+        existsSync(`${candidate}.tsx`) ||
+        existsSync(`${candidate}.js`) ||
+        existsSync(candidate),
+    );
+    if (!found) {
+      throw new Error(
+        `AdminJS component "${name}" not found. Tried:\n${candidates.join('\n')}`,
+      );
+    }
+    return found;
+  };
+
   const dashboardComponent = componentLoader.add(
     'AnalyticsDashboard',
-    dashboardPath,
+    resolveAdminComponent('analytics-dashboard'),
   );
-
-  const metrikaCandidates = [
-    join(process.cwd(), 'src/admin/metrika-settings'),
-    join(process.cwd(), 'dist/admin/metrika-settings'),
-    join(__dirname, 'metrika-settings'),
-  ];
-  const metrikaPath =
-    metrikaCandidates.find((candidate) =>
-      existsSync(`${candidate}.jsx`) || existsSync(candidate),
-    ) ?? metrikaCandidates[0];
   const metrikaComponent = componentLoader.add(
     'MetrikaSettings',
-    metrikaPath,
+    resolveAdminComponent('metrika-settings'),
   );
 
   const analyticsNavigation = { name: 'Аналитика', icon: 'Activity' };
@@ -1240,6 +1245,14 @@ export async function setupAdmin(
       },
     ],
   });
+
+  // @adminjs/express calls initialize() without await — race leaves UserComponents
+  // empty → custom pages show componentNotFound while dashboard silently falls back.
+  if (process.env.NODE_ENV === 'production') {
+    await admin.initialize();
+  } else {
+    await admin.watch();
+  }
 
   const router = AdminJSExpress.buildAuthenticatedRouter(
     admin,
