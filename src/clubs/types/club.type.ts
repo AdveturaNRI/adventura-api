@@ -21,6 +21,7 @@ export type ClubListItem = {
   tags: string[];
   links: ClubLink[];
   schedule: ClubScheduleDay[];
+  tablesCount: number;
   isPublished: boolean;
   coverUrl: string | null;
   galleryUrls: string[];

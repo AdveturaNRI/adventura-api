@@ -84,6 +84,10 @@ export class UpdateProfileDto {
   openToAnySystem?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  prefersFreeOnly?: boolean;
+
+  @IsOptional()
   @IsString()
   @MaxLength(1000)
   about?: string;

@@ -46,6 +46,11 @@ export class RealtimeEmitter {
     return (this.onlineSockets.get(userId)?.size ?? 0) > 0;
   }
 
+  /** Unique users with at least one active socket. */
+  onlineCount(): number {
+    return this.onlineSockets.size;
+  }
+
   emitToUser(userId: string, event: string, payload: unknown) {
     this.server?.to(this.userRoom(userId)).emit(event, payload);
   }

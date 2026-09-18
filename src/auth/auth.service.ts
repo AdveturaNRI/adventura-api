@@ -2,13 +2,17 @@ import { createHash, randomBytes } from 'crypto';
 
 import {
   ConflictException,
+  Inject,
   Injectable,
   UnauthorizedException,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 
+import { ANALYTICS_EVENTS } from '../analytics/analytics.constants';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { NicknameService } from '../nickname/nickname.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
@@ -30,6 +34,8 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly nicknameService: NicknameService,
+    @Inject(forwardRef(() => AnalyticsService))
+    private readonly analytics: AnalyticsService,
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthResponse> {
@@ -65,6 +71,16 @@ export class AuthService {
       select: USER_SELECT,
     });
 
+    this.analytics.track({
+      name: ANALYTICS_EVENTS.USER_REGISTERED,
+      userId: user.id,
+      props: {
+        acquisition_source:
+          dto.acquisitionSource?.trim().slice(0, 64) || 'direct',
+        is_guest: false,
+      },
+    });
+
     return this.buildAuthResponse(user);
   }
 
@@ -84,6 +100,12 @@ export class AuthService {
     if (!isPasswordValid) {
       throw new UnauthorizedException('Неверный email или пароль');
     }
+
+    this.analytics.track({
+      name: ANALYTICS_EVENTS.USER_SESSION_STARTED,
+      userId: user.id,
+      props: { method: 'password' },
+    });
 
     return this.buildAuthResponse({
       id: user.id,
@@ -110,6 +132,17 @@ export class AuthService {
         isGuest: true,
       },
       select: USER_SELECT,
+    });
+
+    this.analytics.track({
+      name: ANALYTICS_EVENTS.USER_REGISTERED,
+      userId: user.id,
+      props: { acquisition_source: 'guest', is_guest: true },
+    });
+    this.analytics.track({
+      name: ANALYTICS_EVENTS.USER_SESSION_STARTED,
+      userId: user.id,
+      props: { method: 'guest' },
     });
 
     return this.buildAuthResponse(user);

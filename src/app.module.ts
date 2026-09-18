@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
+import { AppSettingsModule } from './app-settings/app-settings.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { AuthModule } from './auth/auth.module';
 import { ArtStudioModule } from './art-studio/art-studio.module';
 import { ChatsModule } from './chats/chats.module';
@@ -22,6 +24,8 @@ import { UsersModule } from './users/users.module';
     }),
     StorageModule,
     PrismaModule,
+    AppSettingsModule,
+    AnalyticsModule,
     AuthModule,
     ReferenceModule,
     UsersModule,

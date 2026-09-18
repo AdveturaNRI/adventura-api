@@ -13,6 +13,11 @@ import {
   normalizeGameSystemName,
   resolveGameSystemNames,
 } from '../common/utils/game-system-name.utils';
+import {
+  ANALYTICS_EVENTS,
+  mapAppRolesToAnalytics,
+} from '../analytics/analytics.constants';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { ChatsService } from '../chats/chats.service';
 import { MediaService } from '../media/media.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -27,6 +32,7 @@ import {
   buildQuestionnaireCompletionInput,
   calculateQuestionnaireCompletionPercent,
   isEligibleForWanderersFeed,
+  isQuestionnaireComplete,
 } from './utils/questionnaire-completion.util';
 
 const USER_PROFILE_SELECT = {
@@ -44,6 +50,7 @@ const USER_PROFILE_SELECT = {
   systems: true,
   readyToLearnNew: true,
   openToAnySystem: true,
+  prefersFreeOnly: true,
   about: true,
   description: true,
   roles: true,
@@ -117,6 +124,7 @@ type UserWithRelations = {
   systems: string[];
   readyToLearnNew: boolean;
   openToAnySystem: boolean;
+  prefersFreeOnly: boolean;
   about: string | null;
   description: string | null;
   roles: string[];
@@ -149,6 +157,7 @@ export class UsersService {
     private readonly mediaService: MediaService,
     private readonly imageProcessor: ImageProcessorService,
     private readonly notificationsService: NotificationsService,
+    private readonly analytics: AnalyticsService,
     @Inject(forwardRef(() => ChatsService))
     private readonly chatsService: ChatsService,
   ) {}
@@ -558,6 +567,19 @@ export class UsersService {
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto): Promise<UserProfile> {
+    const previous = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: USER_PROFILE_SELECT,
+    });
+
+    if (!previous) {
+      throw new NotFoundException('Пользователь не найден');
+    }
+
+    const previousComplete = isQuestionnaireComplete(
+      buildQuestionnaireCompletionInput(previous, false),
+    );
+
     if (dto.nickname) {
       const existing = await this.prisma.user.findFirst({
         where: {
@@ -674,6 +696,7 @@ export class UsersService {
         systems: resolvedSystems,
         readyToLearnNew: dto.readyToLearnNew,
         openToAnySystem: dto.openToAnySystem,
+        prefersFreeOnly: dto.prefersFreeOnly,
         about: dto.about !== undefined ? dto.about.trim() || null : undefined,
         description:
           dto.description !== undefined && dto.description !== null
@@ -704,7 +727,37 @@ export class UsersService {
       select: USER_PROFILE_SELECT,
     });
 
-    return this.toProfile(user);
+    const profile = await this.toProfile(user);
+
+    if (dto.roles !== undefined) {
+      const prevRoles = [...previous.roles].sort().join('|');
+      const nextRoles = [...user.roles].sort().join('|');
+      if (prevRoles !== nextRoles) {
+        this.analytics.track({
+          name: ANALYTICS_EVENTS.USER_ROLE_SELECTED,
+          userId,
+          props: { roles: mapAppRolesToAnalytics(user.roles) },
+        });
+      }
+    }
+
+    const nowComplete = isQuestionnaireComplete(
+      buildQuestionnaireCompletionInput(user, Boolean(profile.profileCard)),
+    );
+    if (!previousComplete && nowComplete) {
+      this.analytics.track({
+        name: ANALYTICS_EVENTS.PLAYER_PROFILE_CREATED,
+        userId,
+        props: {
+          free_only: user.prefersFreeOnly,
+          systems: user.systems,
+          plays_online: user.playsOnline,
+          roles: mapAppRolesToAnalytics(user.roles),
+        },
+      });
+    }
+
+    return profile;
   }
 
   async uploadAvatar(userId: string, file?: Express.Multer.File): Promise<UserProfile> {
@@ -805,6 +858,7 @@ export class UsersService {
         systems: [],
         readyToLearnNew: false,
         openToAnySystem: false,
+        prefersFreeOnly: false,
         roles: [],
         questionnaireStep: 0,
         statuses: {
@@ -967,6 +1021,7 @@ export class UsersService {
       systems: user.systems,
       readyToLearnNew: user.readyToLearnNew,
       openToAnySystem: user.openToAnySystem,
+      prefersFreeOnly: user.prefersFreeOnly,
       about: user.about,
       description: user.description,
       roles: user.roles,

@@ -23,6 +23,7 @@ model User {
   systems         String[]         @default([])
   readyToLearnNew Boolean          @default(false)
   openToAnySystem Boolean          @default(false)
+  prefersFreeOnly Boolean          @default(false)
   about           String?
   description     String?
   roles           String[]         @default([])
@@ -53,6 +54,7 @@ model User {
   gameApplications          GameApplication[]
   gamePlayers               GamePlayer[]
   pushSubscriptions         PushSubscription[]
+  analyticsEvents           AnalyticsEvent[]
 }
 
 model Status {
@@ -145,6 +147,8 @@ model Game {
   isOnline         Boolean            @default(false)
   cityId           String?
   city             City?              @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  clubId           String?
+  club             Club?              @relation(fields: [clubId], references: [id], onDelete: SetNull)
   scheduledAt      DateTime?
   timezone         String             @default("Europe/Moscow")
   priceRub         Int?
@@ -161,6 +165,7 @@ model Game {
   @@index([ownerId])
   @@index([userGameSystemId])
   @@index([cityId])
+  @@index([clubId])
   @@index([scheduledAt])
   @@index([status])
   @@map("games")
@@ -268,6 +273,8 @@ model Club {
   city        City?    @relation(fields: [cityId], references: [id], onDelete: SetNull)
   tags        String[] @default([])
   links       Json?
+  /// Physical tables available at the venue.
+  tablesCount Int      @default(1)
   /// JSON: [{ day: 1-7, closed, open: "HH:mm"|null, close: "HH:mm"|null }]
   schedule    Json
   isPublished Boolean  @default(true)
@@ -275,6 +282,7 @@ model Club {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   members     ClubMember[]
+  games       Game[]
 
   @@index([ownerId])
   @@index([cityId])
@@ -509,4 +517,49 @@ model UserBlock {
   @@unique([blockerId, blockedId])
   @@index([blockedId])
   @@map("user_blocks")
+}
+
+enum AnalyticsPlatform {
+  WEB
+  ANDROID
+  IOS
+  SERVER
+}
+
+model AnalyticsEvent {
+  id         String             @id @default(cuid())
+  name       String
+  userId     String?
+  user       User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  platform   AnalyticsPlatform  @default(SERVER)
+  appVersion String?
+  occurredAt DateTime           @default(now())
+  props      Json               @default("{}")
+  createdAt  DateTime           @default(now())
+
+  @@index([name, occurredAt])
+  @@index([userId, occurredAt])
+  @@index([occurredAt])
+  @@map("analytics_events")
+}
+
+model AnalyticsDailyMetric {
+  id        String   @id @default(cuid())
+  day       DateTime @db.Date
+  metric    String
+  value     Float
+  updatedAt DateTime @updatedAt
+
+  @@unique([day, metric])
+  @@index([day])
+  @@map("analytics_daily_metrics")
+}
+
+/** Key-value app config (e.g. Yandex Metrika counter). */
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("app_settings")
 }

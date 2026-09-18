@@ -31,6 +31,7 @@ export type UserProfile = {
   systems: string[];
   readyToLearnNew: boolean;
   openToAnySystem: boolean;
+  prefersFreeOnly: boolean;
   about: string | null;
   description: string | null;
   roles: string[];

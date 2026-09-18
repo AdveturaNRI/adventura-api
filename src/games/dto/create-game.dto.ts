@@ -87,4 +87,8 @@ export class CreateGameDto {
   @Min(12)
   @Max(99)
   minAge?: number | null;
+
+  @IsOptional()
+  @IsString()
+  clubId?: string | null;
 }

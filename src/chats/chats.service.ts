@@ -15,6 +15,8 @@ import {
 
 import { ImageProcessorService } from '../image/image-processor.service';
 import type { ImageUrls } from '../image/image.types';
+import { ANALYTICS_EVENTS } from '../analytics/analytics.constants';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { MediaService } from '../media/media.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PushSubscriptionsService } from '../push-subscriptions/push-subscriptions.service';
@@ -226,6 +228,7 @@ export class ChatsService {
     private readonly imageProcessor: ImageProcessorService,
     private readonly realtime: RealtimeEmitter,
     private readonly pushSubscriptions: PushSubscriptionsService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   async findOrCreateWith(userId: string, peerUserId: string) {
@@ -250,7 +253,10 @@ export class ChatsService {
       },
     });
 
+    let created = false;
+
     if (!conversation) {
+      created = true;
       conversation = await this.prisma.conversation.create({
         data: {
           type: ConversationType.DIRECT,
@@ -277,6 +283,17 @@ export class ChatsService {
         },
         create: { conversationId: conversation.id, userId, lastReadAt: new Date() },
         update: { hiddenAt: null },
+      });
+    }
+
+    if (created) {
+      this.analytics.track({
+        name: ANALYTICS_EVENTS.PLAYER_PROFILE_CONTACTED,
+        userId,
+        props: {
+          profile_user_id: peerUserId,
+          conversation_id: conversation.id,
+        },
       });
     }
 

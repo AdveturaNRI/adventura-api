@@ -105,4 +105,10 @@ export class CreateClubDto {
   @IsOptional()
   @IsBoolean({ message: 'Статус публикации указан неверно' })
   isPublished?: boolean;
+
+  @IsOptional()
+  @IsInt({ message: 'Количество столов должно быть целым числом' })
+  @Min(1, { message: 'Минимум 1 стол' })
+  @Max(100, { message: 'Максимум 100 столов' })
+  tablesCount?: number;
 }
