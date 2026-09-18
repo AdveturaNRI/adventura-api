@@ -7,6 +7,7 @@ import {
   IsIn,
   IsInt,
   IsOptional,
+  Matches,
   Max,
   Min,
   ValidateNested,
@@ -23,6 +24,21 @@ export class DiceRollDieDto {
   @Min(1)
   @Max(8)
   qty!: number;
+}
+
+/** Раскладка с клиента (3D-бросок на фронте). */
+export class DiceRollClientGroupDto {
+  @IsInt()
+  @IsIn([...ALLOWED_SIDES])
+  sides!: number;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(8)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  @Max(100, { each: true })
+  values!: number[];
 }
 
 export class SendDiceRollDto {
@@ -42,4 +58,23 @@ export class SendDiceRollDto {
   @IsOptional()
   @IsBoolean()
   hidden?: boolean;
+
+  /** Hex `#RRGGBB` — цвет кубов у отправителя, для анимации у зрителей. */
+  @IsOptional()
+  @Matches(/^#[0-9A-Fa-f]{6}$/)
+  color?: string;
+
+  /** Итог броска с фронта — источник истины. Без поля сервер бросает сам (legacy). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(7)
+  @ValidateNested({ each: true })
+  @Type(() => DiceRollClientGroupDto)
+  groups?: DiceRollClientGroupDto[];
+
+  /** Преимущество / помеха — только вместе с 2d20. */
+  @IsOptional()
+  @IsIn(['normal', 'advantage', 'disadvantage'])
+  mode?: 'normal' | 'advantage' | 'disadvantage';
 }

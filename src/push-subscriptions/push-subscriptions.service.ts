@@ -41,9 +41,11 @@ export class PushSubscriptionsService implements OnModuleInit {
       webpush.setVapidDetails(subject, publicKey, privateKey);
       this.publicKey = publicKey;
       this.configured = true;
-    } catch (err) {
-      this.logger.warn(
-        `Invalid VAPID keys — web push disabled: ${err instanceof Error ? err.message : String(err)}`,
+    } catch (error) {
+      this.logger.error(
+        `Invalid VAPID keys — web push disabled: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
     }
   }
