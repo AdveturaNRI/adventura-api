@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 
 import type { INestApplication } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
-import type { NextFunction, Request, Response } from 'express';
+import type { Request, Response } from 'express';
 
 import {
   ANALYTICS_EVENTS,
@@ -915,6 +915,15 @@ export async function setupAdmin(
   configService: ConfigService,
   prisma: PrismaService,
 ) {
+  // AdminJS captures COMPONENTS_OUTPUT_PATH when its Router module loads.
+  // Force an absolute tmp dir BEFORE importing adminjs, otherwise production
+  // serves sendFile from a path that never receives the rollup output → 404
+  // on /admin/frontend/assets/components.bundle.js and empty UserComponents.
+  const adminJsDir = resolve(
+    process.env.ADMIN_JS_TMP_DIR?.trim() || join(process.cwd(), '.adminjs'),
+  );
+  process.env.ADMIN_JS_TMP_DIR = adminJsDir;
+
   const [adminjsModule, { default: AdminJSExpress }, prismaAdapter] =
     await Promise.all([
       loadEsmModule<{
@@ -1249,12 +1258,11 @@ export async function setupAdmin(
 
   // @adminjs/express calls initialize() without await — race leaves UserComponents
   // empty → custom pages show componentNotFound while dashboard silently falls back.
+  const bundlePath = join(adminJsDir, 'bundle.js');
+  const entryPath = join(adminJsDir, 'entry.js');
+
   if (process.env.NODE_ENV === 'production') {
     await admin.initialize();
-    const adminJsDir =
-      process.env.ADMIN_JS_TMP_DIR?.trim() || join(process.cwd(), '.adminjs');
-    const bundlePath = join(adminJsDir, 'bundle.js');
-    const entryPath = join(adminJsDir, 'entry.js');
     if (!existsSync(bundlePath) || !existsSync(entryPath)) {
       throw new Error(
         `AdminJS bundle missing after initialize (${entryPath}, ${bundlePath})`,
@@ -1304,14 +1312,22 @@ export async function setupAdmin(
   );
 
   const expressApp = app.getHttpAdapter().getInstance();
-  // Browsers / proxies eagerly cache components.bundle.js — stale empty bundle
-  // shows componentNotFound for new AdminJS pages while the sidebar still lists them.
-  expressApp.use(
+  // AdminJS's own sendFile asset often 404s under Nest (path mismatch / ENOENT
+  // becomes Nest JSON 404). Serve the verified rollup output ourselves first.
+  expressApp.get(
     `${admin.options.rootPath}/frontend/assets/components.bundle.js`,
-    (_req: Request, res: Response, next: NextFunction) => {
+    (_req: Request, res: Response) => {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
-      next();
+      res.type('application/javascript; charset=utf-8');
+      res.sendFile(bundlePath, (err) => {
+        if (err && !res.headersSent) {
+          res
+            .status(500)
+            .type('text/plain')
+            .send(`AdminJS components bundle missing at ${bundlePath}`);
+        }
+      });
     },
   );
   expressApp.use(admin.options.rootPath, router);
