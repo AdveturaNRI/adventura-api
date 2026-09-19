@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
 import { join, resolve } from 'path';
 
 import type { INestApplication } from '@nestjs/common';
@@ -1258,14 +1258,17 @@ export async function setupAdmin(
 
   // @adminjs/express calls initialize() without await — race leaves UserComponents
   // empty → custom pages show componentNotFound while dashboard silently falls back.
-  const bundlePath = join(adminJsDir, 'bundle.js');
+  mkdirSync(adminJsDir, { recursive: true });
+  const rollupBundlePath = join(adminJsDir, 'bundle.js');
   const entryPath = join(adminJsDir, 'entry.js');
+  // Stable copy outside /tmp and outside what a second initialize() may truncate.
+  const stableBundlePath = join(__dirname, 'components.bundle.js');
 
   if (process.env.NODE_ENV === 'production') {
     await admin.initialize();
-    if (!existsSync(bundlePath) || !existsSync(entryPath)) {
+    if (!existsSync(rollupBundlePath) || !existsSync(entryPath)) {
       throw new Error(
-        `AdminJS bundle missing after initialize (${entryPath}, ${bundlePath})`,
+        `AdminJS bundle missing after initialize (${entryPath}, ${rollupBundlePath})`,
       );
     }
     const entry = readFileSync(entryPath, 'utf8');
@@ -1274,12 +1277,18 @@ export async function setupAdmin(
         throw new Error(`AdminJS entry.js missing component ${id}`);
       }
     }
+    copyFileSync(rollupBundlePath, stableBundlePath);
+    // Prevent @adminjs/express initializeAdmin() from rebuilding/truncating the bundle.
+    process.env.ADMIN_JS_SKIP_BUNDLE = 'true';
     // eslint-disable-next-line no-console
     console.log(
-      `AdminJS: custom components ready (${bundlePath}, ${Buffer.byteLength(readFileSync(bundlePath))} bytes)`,
+      `AdminJS: custom components ready (${stableBundlePath}, ${Buffer.byteLength(readFileSync(stableBundlePath))} bytes)`,
     );
   } else {
     await admin.watch();
+    if (existsSync(rollupBundlePath)) {
+      copyFileSync(rollupBundlePath, stableBundlePath);
+    }
   }
 
   const router = AdminJSExpress.buildAuthenticatedRouter(
@@ -1312,20 +1321,25 @@ export async function setupAdmin(
   );
 
   const expressApp = app.getHttpAdapter().getInstance();
-  // AdminJS's own sendFile asset often 404s under Nest (path mismatch / ENOENT
-  // becomes Nest JSON 404). Serve the verified rollup output ourselves first.
+  // AdminJS's own sendFile asset 404s under Nest when the rollup path drifts.
+  // Serve our stable copy first; never fall through to Nest JSON 404.
   expressApp.get(
     `${admin.options.rootPath}/frontend/assets/components.bundle.js`,
     (_req: Request, res: Response) => {
+      const filePath = existsSync(stableBundlePath)
+        ? stableBundlePath
+        : rollupBundlePath;
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       res.type('application/javascript; charset=utf-8');
-      res.sendFile(bundlePath, (err) => {
+      res.sendFile(filePath, (err) => {
         if (err && !res.headersSent) {
           res
             .status(500)
             .type('text/plain')
-            .send(`AdminJS components bundle missing at ${bundlePath}`);
+            .send(
+              `AdminJS components bundle missing at ${filePath}: ${err.message}`,
+            );
         }
       });
     },
