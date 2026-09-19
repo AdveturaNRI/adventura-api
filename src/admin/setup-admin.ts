@@ -4,6 +4,7 @@ import { join } from 'path';
 import type { INestApplication } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
+import type { NextFunction, Request, Response } from 'express';
 
 import {
   ANALYTICS_EVENTS,
@@ -1307,7 +1308,7 @@ export async function setupAdmin(
   // shows componentNotFound for new AdminJS pages while the sidebar still lists them.
   expressApp.use(
     `${admin.options.rootPath}/frontend/assets/components.bundle.js`,
-    (_req, res, next) => {
+    (_req: Request, res: Response, next: NextFunction) => {
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
       next();
