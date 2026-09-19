@@ -13,6 +13,7 @@ model User {
   nickname        String           @unique
   passwordHash    String
   isGuest         Boolean          @default(false)
+  emailVerifiedAt DateTime?
   availability    String?
   age             Int?
   location        String?
@@ -32,6 +33,7 @@ model User {
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   refreshTokens   RefreshToken[]
+  emailTokens     EmailToken[]
   statuses        UserStatus[]
   experiences     UserExperience[]
   city            City?            @relation(fields: [cityId], references: [id], onDelete: SetNull)
@@ -319,6 +321,25 @@ model RefreshToken {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+enum EmailTokenType {
+  VERIFY_EMAIL
+  RESET_PASSWORD
+}
+
+model EmailToken {
+  id        String         @id @default(cuid())
+  userId    String
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      EmailTokenType
+  tokenHash String         @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime       @default(now())
+
+  @@index([userId, type])
+  @@map("email_tokens")
 }
 
 model Media {
