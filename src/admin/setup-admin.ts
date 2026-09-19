@@ -1,4 +1,4 @@
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 import type { INestApplication } from '@nestjs/common';
@@ -1250,6 +1250,25 @@ export async function setupAdmin(
   // empty → custom pages show componentNotFound while dashboard silently falls back.
   if (process.env.NODE_ENV === 'production') {
     await admin.initialize();
+    const adminJsDir =
+      process.env.ADMIN_JS_TMP_DIR?.trim() || join(process.cwd(), '.adminjs');
+    const bundlePath = join(adminJsDir, 'bundle.js');
+    const entryPath = join(adminJsDir, 'entry.js');
+    if (!existsSync(bundlePath) || !existsSync(entryPath)) {
+      throw new Error(
+        `AdminJS bundle missing after initialize (${entryPath}, ${bundlePath})`,
+      );
+    }
+    const entry = readFileSync(entryPath, 'utf8');
+    for (const id of ['AnalyticsDashboard', 'MetrikaSettings'] as const) {
+      if (!entry.includes(id)) {
+        throw new Error(`AdminJS entry.js missing component ${id}`);
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(
+      `AdminJS: custom components ready (${bundlePath}, ${Buffer.byteLength(readFileSync(bundlePath))} bytes)`,
+    );
   } else {
     await admin.watch();
   }
@@ -1284,5 +1303,15 @@ export async function setupAdmin(
   );
 
   const expressApp = app.getHttpAdapter().getInstance();
+  // Browsers / proxies eagerly cache components.bundle.js — stale empty bundle
+  // shows componentNotFound for new AdminJS pages while the sidebar still lists them.
+  expressApp.use(
+    `${admin.options.rootPath}/frontend/assets/components.bundle.js`,
+    (_req, res, next) => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      next();
+    },
+  );
   expressApp.use(admin.options.rootPath, router);
 }
