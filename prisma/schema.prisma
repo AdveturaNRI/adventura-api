@@ -29,6 +29,9 @@ model User {
   description     String?
   roles           String[]         @default([])
   questionnaireStep Int            @default(0)
+  notificationSoundsEnabled Boolean @default(true)
+  notificationSoundPresetId String?
+  useCustomNotificationSound Boolean @default(false)
   lastSeenAt        DateTime?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
@@ -37,6 +40,7 @@ model User {
   statuses        UserStatus[]
   experiences     UserExperience[]
   city            City?            @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  notificationSoundPreset NotificationSoundPreset? @relation("UserNotificationSoundPreset", fields: [notificationSoundPresetId], references: [id], onDelete: SetNull)
   userCities      UserCity[]
   gameSystems     UserGameSystem[]
   wandererReactionsGiven    WandererReaction[] @relation("WandererReactionsGiven")
@@ -57,6 +61,26 @@ model User {
   gamePlayers               GamePlayer[]
   pushSubscriptions         PushSubscription[]
   analyticsEvents           AnalyticsEvent[]
+
+  @@index([notificationSoundPresetId])
+}
+
+model NotificationSoundPreset {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  label       String
+  description String?
+  /// Client-relative fallback, e.g. /sounds/notify-magic.mp3
+  staticPath  String?
+  sortOrder   Int      @default(0)
+  isDefault   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  users       User[]   @relation("UserNotificationSoundPreset")
+
+  @@index([sortOrder])
+  @@map("notification_sound_presets")
 }
 
 model Status {
@@ -400,6 +424,10 @@ model Conversation {
   userLowId     String?
   userHighId    String?
   lastMessageAt DateTime?
+  /// Shared wallpaper: default | preset | custom. null = each user uses own settings.
+  backgroundKind     String?
+  backgroundPresetId String?
+  backgroundUrl      String?
   createdAt     DateTime                   @default(now())
   updatedAt     DateTime                   @updatedAt
   game          Game?                      @relation(fields: [gameId], references: [id], onDelete: SetNull)
@@ -491,6 +519,14 @@ enum NotificationType {
   GAME_PLAYER_REMOVED
   GAME_DELETED
   CLUB_DELETED
+  SYSTEM_ANNOUNCEMENT
+}
+
+enum BroadcastCampaignStatus {
+  DRAFT
+  SENDING
+  SENT
+  FAILED
 }
 
 model Notification {
@@ -499,6 +535,8 @@ model Notification {
   actorId   String
   type      NotificationType
   subject   String           @default("")
+  /// Free-form body (system announcements). Empty for typed events.
+  body      String           @default("")
   refId     String           @default("")
   readAt    DateTime?
   createdAt DateTime         @default(now())
@@ -510,6 +548,29 @@ model Notification {
   @@index([userId, createdAt])
   @@index([userId, readAt])
   @@map("notifications")
+}
+
+/// Admin mass notifications (in-app + optional push).
+model BroadcastCampaign {
+  id             String                  @id @default(cuid())
+  title          String
+  body           String
+  filters        Json                    @default("{}")
+  /// Channels: in_app (always), push (optional)
+  sendInApp      Boolean                 @default(true)
+  sendPush       Boolean                 @default(true)
+  status         BroadcastCampaignStatus @default(DRAFT)
+  createdById    String?
+  recipientCount Int                     @default(0)
+  sentCount      Int                     @default(0)
+  pushCount      Int                     @default(0)
+  error          String?
+  createdAt      DateTime                @default(now())
+  sentAt         DateTime?
+  updatedAt      DateTime                @updatedAt
+
+  @@index([createdAt])
+  @@map("broadcast_campaigns")
 }
 
 model PushSubscription {

@@ -37,6 +37,12 @@ export type UserProfile = {
   roles: string[];
   questionnaireStep: number;
   questionnaireCompletionPercent: number;
+  notificationSoundsEnabled: boolean;
+  notificationSoundPresetId: string | null;
+  notificationSoundPresetSlug: string | null;
+  useCustomNotificationSound: boolean;
+  customNotificationSoundUrl: string | null;
+  effectiveNotificationSoundUrl: string | null;
   avatar: ImageUrls | null;
   profileCard: ImageUrls | null;
   createdAt: Date;

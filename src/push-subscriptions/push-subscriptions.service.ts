@@ -1,7 +1,10 @@
+import { readFileSync } from 'fs';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as admin from 'firebase-admin';
 import * as webpush from 'web-push';
 
+import { AppSettingsService } from '../app-settings/app-settings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeEmitter } from '../realtime/realtime.emitter';
 
@@ -13,19 +16,36 @@ export type WebPushPayload = {
   url?: string;
 };
 
+const FCM_KEY_MARKER = 'fcm';
+
+function isFcmSubscription(sub: { endpoint: string; p256dh: string; auth: string }) {
+  return (
+    sub.p256dh === FCM_KEY_MARKER ||
+    sub.auth === FCM_KEY_MARKER ||
+    (!sub.endpoint.startsWith('http://') && !sub.endpoint.startsWith('https://'))
+  );
+}
+
 @Injectable()
 export class PushSubscriptionsService implements OnModuleInit {
   private readonly logger = new Logger(PushSubscriptionsService.name);
-  private configured = false;
+  private webpushConfigured = false;
+  private fcmConfigured = false;
   private publicKey = '';
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly realtime: RealtimeEmitter,
+    private readonly appSettings: AppSettingsService,
   ) {}
 
   onModuleInit() {
+    this.initWebPush();
+    void this.initFirebase();
+  }
+
+  private initWebPush() {
     const publicKey = this.config.get<string>('VAPID_PUBLIC_KEY')?.trim() ?? '';
     const privateKey = this.config.get<string>('VAPID_PRIVATE_KEY')?.trim() ?? '';
     const subject =
@@ -33,25 +53,143 @@ export class PushSubscriptionsService implements OnModuleInit {
       'mailto:admin@adventura.local';
 
     if (!publicKey || !privateKey) {
-      this.logger.warn('VAPID keys missing — web push disabled');
       return;
     }
 
     try {
       webpush.setVapidDetails(subject, publicKey, privateKey);
       this.publicKey = publicKey;
-      this.configured = true;
+      this.webpushConfigured = true;
     } catch (error) {
       this.logger.error(
-        `Invalid VAPID keys — web push disabled: ${
+        `Invalid VAPID keys — legacy web push disabled: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
     }
   }
 
-  getPublicKey() {
-    return { publicKey: this.publicKey || null, enabled: this.configured };
+  private async initFirebase() {
+    const vapid = await this.appSettings.resolveFirebaseWebVapidKey();
+    if (vapid) {
+      this.publicKey = vapid;
+    }
+
+    const jsonRaw = await this.appSettings.resolveFirebaseServiceAccountJson();
+    const jsonPath = this.config.get<string>('FIREBASE_SERVICE_ACCOUNT_PATH')?.trim();
+    const projectId =
+      (await this.appSettings.getFirebaseProjectId()) ||
+      this.config.get<string>('FIREBASE_PROJECT_ID')?.trim() ||
+      '';
+
+    if (!jsonRaw && !jsonPath) {
+      this.logger.warn(
+        'FIREBASE_SERVICE_ACCOUNT_JSON/PATH missing — FCM send disabled (client tokens still ok if VAPID set)',
+      );
+      return;
+    }
+
+    try {
+      if (admin.apps.length === 0) {
+        let parsed: admin.ServiceAccount;
+        if (jsonRaw) {
+          parsed = JSON.parse(jsonRaw) as admin.ServiceAccount;
+        } else {
+          parsed = JSON.parse(readFileSync(jsonPath!, 'utf8')) as admin.ServiceAccount;
+        }
+        admin.initializeApp({
+          credential: admin.credential.cert(parsed),
+          projectId: projectId || parsed.projectId,
+        });
+      }
+      this.fcmConfigured = true;
+      this.logger.log('Firebase Admin ready for FCM');
+    } catch (error) {
+      this.fcmConfigured = false;
+      this.logger.error(
+        `Firebase Admin init failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  /** After admin saves VAPID / service account — hot-reload without restart. */
+  async reloadFirebaseFromSettings() {
+    const vapid = await this.appSettings.resolveFirebaseWebVapidKey();
+    this.publicKey = vapid || this.publicKey;
+
+    if (this.fcmConfigured) {
+      return;
+    }
+
+    const jsonRaw = await this.appSettings.resolveFirebaseServiceAccountJson();
+    const jsonPath = this.config.get<string>('FIREBASE_SERVICE_ACCOUNT_PATH')?.trim();
+    const projectId =
+      (await this.appSettings.getFirebaseProjectId()) ||
+      this.config.get<string>('FIREBASE_PROJECT_ID')?.trim() ||
+      '';
+
+    if (!jsonRaw && !jsonPath) {
+      return;
+    }
+
+    try {
+      if (admin.apps.length === 0) {
+        let parsed: admin.ServiceAccount;
+        if (jsonRaw) {
+          parsed = JSON.parse(jsonRaw) as admin.ServiceAccount;
+        } else {
+          parsed = JSON.parse(readFileSync(jsonPath!, 'utf8')) as admin.ServiceAccount;
+        }
+        admin.initializeApp({
+          credential: admin.credential.cert(parsed),
+          projectId: projectId || parsed.projectId,
+        });
+      }
+      this.fcmConfigured = true;
+      this.logger.log('Firebase Admin ready for FCM (reloaded from settings)');
+    } catch (error) {
+      this.logger.error(
+        `Firebase Admin reload failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  async getPublicKey() {
+    const fcmVapid = await this.appSettings.resolveFirebaseWebVapidKey();
+    const key = fcmVapid || this.publicKey || null;
+    if (fcmVapid) {
+      this.publicKey = fcmVapid;
+    }
+    // VAPID alone is enough for client subscribe (FCM getToken). Send needs SA.
+    const enabled = Boolean(key);
+    const useFcm = Boolean(fcmVapid) || this.fcmConfigured;
+    return {
+      publicKey: key,
+      enabled,
+      provider: useFcm ? ('fcm' as const) : this.webpushConfigured ? ('webpush' as const) : ('none' as const),
+      reason: enabled
+        ? null
+        : ('missing_vapid' as const),
+      sendEnabled: this.fcmConfigured || this.webpushConfigured,
+    };
+  }
+
+  getRuntimeStatus() {
+    return {
+      subscribeEnabled: Boolean(this.publicKey),
+      sendEnabled: this.fcmConfigured || this.webpushConfigured,
+      provider: this.fcmConfigured
+        ? ('fcm' as const)
+        : this.webpushConfigured
+          ? ('webpush' as const)
+          : ('none' as const),
+      fcmConfigured: this.fcmConfigured,
+      webpushConfigured: this.webpushConfigured,
+    };
   }
 
   async upsertSubscription(
@@ -82,6 +220,21 @@ export class PushSubscriptionsService implements OnModuleInit {
     return { ok: true as const, id: row.id };
   }
 
+  async upsertFcmToken(
+    userId: string,
+    input: { token: string; userAgent?: string },
+  ) {
+    const token = input.token.trim();
+    if (!token) {
+      return { ok: false as const };
+    }
+    return this.upsertSubscription(userId, {
+      endpoint: token,
+      keys: { p256dh: FCM_KEY_MARKER, auth: FCM_KEY_MARKER },
+      userAgent: input.userAgent,
+    });
+  }
+
   async removeByEndpoint(userId: string, endpoint: string) {
     await this.prisma.pushSubscription.deleteMany({
       where: { userId, endpoint: endpoint.trim() },
@@ -101,7 +254,7 @@ export class PushSubscriptionsService implements OnModuleInit {
   }
 
   async sendToUser(userId: string, payload: WebPushPayload) {
-    if (!this.configured) {
+    if (!this.fcmConfigured && !this.webpushConfigured) {
       return;
     }
     if (this.realtime.isOnline(userId)) {
@@ -115,23 +268,38 @@ export class PushSubscriptionsService implements OnModuleInit {
       return;
     }
 
-    const body = JSON.stringify({
-      title: payload.title,
-      body: payload.body,
-      icon: payload.icon ?? '/icons/icon-192.png',
-      tag: payload.tag,
-      url: payload.url ?? '/',
-    });
+    const icon = payload.icon ?? '/icons/icon-192.png';
+    const url = payload.url ?? '/';
+    const tag = payload.tag ?? 'adventura';
 
     await Promise.all(
       subscriptions.map(async (sub) => {
+        if (isFcmSubscription(sub)) {
+          await this.sendFcm(sub.endpoint, sub.id, {
+            title: payload.title,
+            body: payload.body,
+            icon,
+            tag,
+            url,
+          });
+          return;
+        }
+        if (!this.webpushConfigured) {
+          return;
+        }
         try {
           await webpush.sendNotification(
             {
               endpoint: sub.endpoint,
               keys: { p256dh: sub.p256dh, auth: sub.auth },
             },
-            body,
+            JSON.stringify({
+              title: payload.title,
+              body: payload.body,
+              icon,
+              tag,
+              url,
+            }),
           );
         } catch (error) {
           const statusCode =
@@ -155,5 +323,69 @@ export class PushSubscriptionsService implements OnModuleInit {
         }
       }),
     );
+  }
+
+  private async sendFcm(
+    token: string,
+    subscriptionId: string,
+    payload: Required<WebPushPayload>,
+  ) {
+    if (!this.fcmConfigured) {
+      return;
+    }
+    try {
+      await admin.messaging().send({
+        token,
+        notification: {
+          title: payload.title,
+          body: payload.body,
+        },
+        data: {
+          title: payload.title,
+          body: payload.body,
+          icon: payload.icon,
+          tag: payload.tag,
+          url: payload.url,
+        },
+        webpush: {
+          notification: {
+            icon: payload.icon,
+            badge: payload.icon,
+            tag: payload.tag,
+            renotify: true,
+          },
+          fcmOptions: {
+            link: payload.url.startsWith('http')
+              ? payload.url
+              : undefined,
+          },
+        },
+      });
+    } catch (error) {
+      const code =
+        typeof error === 'object' &&
+        error &&
+        'code' in error &&
+        typeof (error as { code?: unknown }).code === 'string'
+          ? (error as { code: string }).code
+          : '';
+
+      if (
+        code === 'messaging/registration-token-not-registered' ||
+        code === 'messaging/invalid-registration-token' ||
+        code === 'messaging/invalid-argument'
+      ) {
+        await this.prisma.pushSubscription.deleteMany({
+          where: { endpoint: token },
+        });
+        return;
+      }
+
+      this.logger.warn(
+        `FCM failed for ${subscriptionId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 }

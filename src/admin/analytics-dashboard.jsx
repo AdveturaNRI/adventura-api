@@ -16,6 +16,56 @@ const GROUP_LABELS = {
   metrics: 'Метрики',
 };
 
+function formatDurationMs(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) return `${totalSec} с`;
+  const totalMin = Math.round(totalSec / 60);
+  if (totalMin < 60) return `${totalMin} мин`;
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  if (hours < 48) return mins > 0 ? `${hours} ч ${mins} мин` : `${hours} ч`;
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours > 0 ? `${days} д ${remHours} ч` : `${days} д`;
+}
+
+function formatMetricValue(value, format = 'count') {
+  if (value == null || !Number.isFinite(value)) return '—';
+  switch (format) {
+    case 'percent01':
+      return `${(value * 100).toFixed(1)}%`;
+    case 'percent100':
+      return `${value.toFixed(1)}%`;
+    case 'ratio':
+      return value.toFixed(2);
+    case 'duration_ms':
+      return formatDurationMs(value);
+    case 'count':
+    default:
+      return Number.isInteger(value) ? String(value) : String(Math.round(value));
+  }
+}
+
+function aggregateSeriesTotal(series, metaById) {
+  const meta = metaById[series.id] ?? {};
+  const gauge = Boolean(meta.gauge ?? series.gauge);
+  const format = meta.valueFormat ?? series.valueFormat ?? 'count';
+  const points = series.points ?? [];
+  const values = points
+    .map((p) => p.v)
+    .filter((v) => typeof v === 'number' && Number.isFinite(v));
+  if (values.length === 0) {
+    return { raw: null, display: '—', hint: gauge ? 'снимок' : 'сумма' };
+  }
+  const raw = gauge ? values[values.length - 1] : values.reduce((a, b) => a + b, 0);
+  return {
+    raw,
+    display: formatMetricValue(raw, format),
+    hint: gauge ? 'на конец периода' : 'сумма за период',
+  };
+}
+
 function MetricCard({ label, value, hint, color }) {
   return (
     <Box
@@ -140,7 +190,9 @@ function LineChart({ series, bucket, height = 320 }) {
   const labels = series[0]?.points?.map((p) => p.t) ?? [];
   const maxY = Math.max(
     1,
-    ...series.flatMap((s) => s.points.map((p) => p.v)),
+    ...series.flatMap((s) =>
+      s.points.map((p) => p.v).filter((v) => typeof v === 'number' && Number.isFinite(v)),
+    ),
   );
   const niceMax = (() => {
     const exp = Math.pow(10, Math.floor(Math.log10(maxY)));
@@ -196,9 +248,18 @@ function LineChart({ series, bucket, height = 320 }) {
         ))}
 
         {series.map((s) => {
-          const d = s.points
-            .map((p, i) => `${i === 0 ? 'M' : 'L'} ${xAt(i)} ${yAt(p.v)}`)
-            .join(' ');
+          const parts = [];
+          let started = false;
+          s.points.forEach((p, i) => {
+            if (typeof p.v !== 'number' || !Number.isFinite(p.v)) {
+              started = false;
+              return;
+            }
+            parts.push(`${started ? 'L' : 'M'} ${xAt(i)} ${yAt(p.v)}`);
+            started = true;
+          });
+          const d = parts.join(' ');
+          if (!d) return null;
           return (
             <path
               key={s.id}
@@ -213,15 +274,17 @@ function LineChart({ series, bucket, height = 320 }) {
         })}
 
         {series.map((s) =>
-          s.points.map((p, i) => (
-            <circle
-              key={`${s.id}-${p.t}`}
-              cx={xAt(i)}
-              cy={yAt(p.v)}
-              r={labels.length > 40 ? 2 : 3.5}
-              fill={s.color}
-            />
-          )),
+          s.points.map((p, i) =>
+            typeof p.v === 'number' && Number.isFinite(p.v) ? (
+              <circle
+                key={`${s.id}-${p.t}`}
+                cx={xAt(i)}
+                cy={yAt(p.v)}
+                r={labels.length > 40 ? 2 : 3.5}
+                fill={s.color}
+              />
+            ) : null,
+          ),
         )}
 
         {labels.map((t, i) =>
@@ -278,17 +341,24 @@ function LineChart({ series, bucket, height = 320 }) {
             >
               {formatAxisLabel(labels[hover], bucket)}
             </text>
-            {series.map((s, idx) => (
-              <text
-                key={s.id}
-                x={Math.min(xAt(hover) + 20, width - 210)}
-                y={pad.top + 44 + idx * 18}
-                fontSize="11"
-                fill={s.color}
-              >
-                {s.label}: {s.points[hover]?.v ?? 0}
-              </text>
-            ))}
+            {series.map((s, idx) => {
+              const raw = s.points[hover]?.v;
+              const formatted =
+                typeof raw === 'number' && Number.isFinite(raw)
+                  ? formatMetricValue(raw, s.valueFormat ?? 'count')
+                  : '—';
+              return (
+                <text
+                  key={s.id}
+                  x={Math.min(xAt(hover) + 20, width - 210)}
+                  y={pad.top + 44 + idx * 18}
+                  fontSize="11"
+                  fill={s.color}
+                >
+                  {s.label}: {formatted}
+                </text>
+              );
+            })}
           </g>
         )}
       </svg>
@@ -326,6 +396,14 @@ const AnalyticsDashboard = () => {
     };
   }, []);
 
+  const metaById = useMemo(() => {
+    const map = {};
+    for (const meta of data?.seriesMeta ?? []) {
+      map[meta.id] = meta;
+    }
+    return map;
+  }, [data]);
+
   const current = data?.ranges?.[range];
 
   const visibleSeries = useMemo(() => {
@@ -334,13 +412,17 @@ const AnalyticsDashboard = () => {
   }, [current, enabled]);
 
   const totals = useMemo(() => {
-    return visibleSeries.map((s) => ({
-      id: s.id,
-      label: s.label,
-      color: s.color,
-      sum: s.points.reduce((acc, p) => acc + p.v, 0),
-    }));
-  }, [visibleSeries]);
+    return visibleSeries.map((s) => {
+      const aggregated = aggregateSeriesTotal(s, metaById);
+      return {
+        id: s.id,
+        label: s.label,
+        color: s.color,
+        display: aggregated.display,
+        hint: aggregated.hint,
+      };
+    });
+  }, [visibleSeries, metaById]);
 
   const toggle = (id) => {
     setEnabled((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -383,8 +465,10 @@ const AnalyticsDashboard = () => {
     <Box variant="grey20" padding="xxl">
       <Header.H2 marginBottom="lg">Аналитика Adventura</Header.H2>
       <Text color="grey60" marginBottom="xl">
-        Просмотры — карточка видна ≥3с. Переходы — открытие деталки. Лимит: 1 /
-        пользователь / сущность / час. Наведи на линию — увидишь, что считается.
+        Карточки сверху — актуальное состояние БД сейчас. Числа над графиком за
+        период: для снимков (пользователи, анкеты, DAU/WAU/MAU, %) берётся
+        последнее значение; для событий — сумма. Просмотры — карточка видна ≥3с.
+        Переходы — открытие деталки.
       </Text>
 
       <Box display="flex" flexWrap="wrap" style={{ gap: 16 }} marginBottom="xl">
@@ -448,8 +532,13 @@ const AnalyticsDashboard = () => {
           </Header.H3>
           <Box display="flex" flexWrap="wrap" style={{ gap: 12 }}>
             {totals.map((t) => (
-              <Text key={t.id} fontSize={13} style={{ color: t.color }}>
-                {t.label}: <strong>{t.sum}</strong>
+              <Text
+                key={t.id}
+                fontSize={13}
+                style={{ color: t.color }}
+                title={t.hint}
+              >
+                {t.label}: <strong>{t.display}</strong>
               </Text>
             ))}
           </Box>

@@ -109,4 +109,16 @@ export class UpdateProfileDto {
   @Min(0)
   @Max(20)
   questionnaireStep?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  notificationSoundsEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  notificationSoundPresetId?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  useCustomNotificationSound?: boolean;
 }

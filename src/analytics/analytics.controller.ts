@@ -9,8 +9,6 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { AnalyticsPlatform } from '@prisma/client';
-
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthUser } from '../auth/types/auth-response.type';
@@ -51,7 +49,7 @@ export class AnalyticsController {
       dto.entity,
       dto.id,
       {
-        platform: (dto.platform as AnalyticsPlatform | undefined) ?? undefined,
+        platform: dto.platform ?? undefined,
         appVersion: dto.appVersion,
       },
     );
@@ -81,7 +79,7 @@ export class AnalyticsController {
       dto.entity,
       dto.id,
       {
-        platform: (dto.platform as AnalyticsPlatform | undefined) ?? undefined,
+        platform: dto.platform ?? undefined,
         appVersion: dto.appVersion,
       },
     );
@@ -112,12 +110,44 @@ export class AnalyticsController {
     };
   }
 
+  /**
+   * Recompute daily metrics. Without query — today (UTC).
+   * Optional `from`/`to` (YYYY-MM-DD) — inclusive UTC day range (no event deletion).
+   */
   @Post('metrics/aggregate')
-  async aggregateNow() {
+  async aggregateNow(@Query('from') from?: string, @Query('to') to?: string) {
     const today = new Date();
     const day = new Date(
       Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()),
     );
+
+    if (from || to) {
+      const rangeFrom = from ? new Date(`${from}T00:00:00.000Z`) : day;
+      const rangeTo = to ? new Date(`${to}T00:00:00.000Z`) : day;
+      if (
+        Number.isNaN(rangeFrom.getTime()) ||
+        Number.isNaN(rangeTo.getTime())
+      ) {
+        throw new HttpException(
+          { message: 'Invalid from/to date' },
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      if (rangeFrom.getTime() > rangeTo.getTime()) {
+        throw new HttpException(
+          { message: 'from must be <= to' },
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      const { days } = await this.aggregator.aggregateRange(rangeFrom, rangeTo);
+      return {
+        ok: true,
+        from: rangeFrom.toISOString().slice(0, 10),
+        to: rangeTo.toISOString().slice(0, 10),
+        days,
+      };
+    }
+
     await this.aggregator.aggregateDay(day);
     return { ok: true, day: day.toISOString().slice(0, 10) };
   }

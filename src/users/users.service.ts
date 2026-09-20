@@ -20,6 +20,7 @@ import {
 import { AnalyticsService } from '../analytics/analytics.service';
 import { ChatsService } from '../chats/chats.service';
 import { MediaService } from '../media/media.service';
+import { NotificationSoundsService } from '../notification-sounds/notification-sounds.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -55,8 +56,21 @@ const USER_PROFILE_SELECT = {
   description: true,
   roles: true,
   questionnaireStep: true,
+  notificationSoundsEnabled: true,
+  notificationSoundPresetId: true,
+  useCustomNotificationSound: true,
   createdAt: true,
   updatedAt: true,
+  notificationSoundPreset: {
+    select: {
+      id: true,
+      slug: true,
+      label: true,
+      isDefault: true,
+      isActive: true,
+      staticPath: true,
+    },
+  },
   statuses: {
     select: {
       status: {
@@ -129,8 +143,19 @@ type UserWithRelations = {
   description: string | null;
   roles: string[];
   questionnaireStep: number;
+  notificationSoundsEnabled: boolean;
+  notificationSoundPresetId: string | null;
+  useCustomNotificationSound: boolean;
   createdAt: Date;
   updatedAt: Date;
+  notificationSoundPreset: {
+    id: string;
+    slug: string;
+    label: string;
+    isDefault: boolean;
+    isActive: boolean;
+    staticPath: string | null;
+  } | null;
   statuses: { status: { id: string; name: string } }[];
   experiences: { experienceType: { id: string; name: string } }[];
   city: {
@@ -157,6 +182,7 @@ export class UsersService {
     private readonly mediaService: MediaService,
     private readonly imageProcessor: ImageProcessorService,
     private readonly notificationsService: NotificationsService,
+    private readonly notificationSounds: NotificationSoundsService,
     private readonly analytics: AnalyticsService,
     @Inject(forwardRef(() => ChatsService))
     private readonly chatsService: ChatsService,
@@ -684,6 +710,17 @@ export class UsersService {
       }
     }
 
+    if (dto.notificationSoundPresetId !== undefined && dto.notificationSoundPresetId) {
+      await this.notificationSounds.assertPresetActive(dto.notificationSoundPresetId);
+    }
+
+    if (dto.useCustomNotificationSound === true) {
+      const customUrl = await this.notificationSounds.resolveCustomAudioUrl(userId);
+      if (!customUrl) {
+        throw new BadRequestException('Сначала загрузите свой звук');
+      }
+    }
+
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: {
@@ -704,6 +741,12 @@ export class UsersService {
             : undefined,
         roles: dto.roles,
         questionnaireStep: dto.questionnaireStep,
+        notificationSoundsEnabled: dto.notificationSoundsEnabled,
+        notificationSoundPresetId:
+          dto.notificationSoundPresetId === undefined
+            ? undefined
+            : dto.notificationSoundPresetId || null,
+        useCustomNotificationSound: dto.useCustomNotificationSound,
         ...(cityUpdate ?? {}),
         ...(dto.statusIds !== undefined
           ? {
@@ -804,10 +847,18 @@ export class UsersService {
       throw new BadRequestException('Файл не передан');
     }
 
-    const variants = await this.imageProcessor.processImage(
+    const cardVariants = await this.imageProcessor.processImage(
       file.buffer,
       file.mimetype,
       ['cardThumb', 'card', 'original'],
+    );
+
+    // Same upload also fills the round avatar used in header / chats / nav.
+    // Otherwise onboarding photo only lands in profileCard and looks "lost".
+    const avatarVariants = await this.imageProcessor.processImage(
+      file.buffer,
+      file.mimetype,
+      ['thumb', 'small', 'medium', 'large'],
     );
 
     await this.mediaService.replaceCollection(
@@ -816,7 +867,16 @@ export class UsersService {
         entityId: userId,
         collection: PROFILE_CARD_COLLECTION,
       },
-      variants,
+      cardVariants,
+    );
+
+    await this.mediaService.replaceCollection(
+      {
+        entityType: USER_ENTITY_TYPE,
+        entityId: userId,
+        collection: AVATAR_COLLECTION,
+      },
+      avatarVariants,
     );
 
     await this.touchUserMediaUpdatedAt(userId);
@@ -833,6 +893,22 @@ export class UsersService {
 
     await this.touchUserMediaUpdatedAt(userId);
 
+    return this.getProfile(userId);
+  }
+
+  async uploadNotificationSound(
+    userId: string,
+    file?: Express.Multer.File,
+  ): Promise<UserProfile> {
+    if (!file) {
+      throw new BadRequestException('Файл не передан');
+    }
+    await this.notificationSounds.uploadUserCustomSound(userId, file);
+    return this.getProfile(userId);
+  }
+
+  async deleteNotificationSound(userId: string): Promise<UserProfile> {
+    await this.notificationSounds.deleteUserCustomSound(userId);
     return this.getProfile(userId);
   }
 
@@ -1002,7 +1078,7 @@ export class UsersService {
     const hasProfileCard = Object.keys(profileCardUrls).length > 0;
     const cities = this.mapProfileCities(user);
 
-    return {
+    const profile: UserProfile = {
       id: user.id,
       email: user.email,
       nickname: user.nickname,
@@ -1029,11 +1105,39 @@ export class UsersService {
       questionnaireCompletionPercent: calculateQuestionnaireCompletionPercent(
         buildQuestionnaireCompletionInput(user, hasProfileCard),
       ),
+      notificationSoundsEnabled: user.notificationSoundsEnabled,
+      notificationSoundPresetId: user.notificationSoundPresetId,
+      notificationSoundPresetSlug: user.notificationSoundPreset?.slug ?? null,
+      useCustomNotificationSound: user.useCustomNotificationSound,
+      customNotificationSoundUrl: null,
+      effectiveNotificationSoundUrl: null,
       avatar: Object.keys(avatarUrls).length > 0 ? avatarUrls : null,
       profileCard: hasProfileCard ? profileCardUrls : null,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
+
+    const customUrl = await this.notificationSounds.resolveCustomAudioUrl(user.id);
+    profile.customNotificationSoundUrl = customUrl;
+    profile.useCustomNotificationSound =
+      user.useCustomNotificationSound && Boolean(customUrl);
+
+    if (profile.useCustomNotificationSound && customUrl) {
+      profile.effectiveNotificationSoundUrl = customUrl;
+    } else {
+      let presetId = user.notificationSoundPresetId;
+      if (!presetId || !user.notificationSoundPreset?.isActive) {
+        const fallback = await this.notificationSounds.getDefaultPreset();
+        presetId = fallback?.id ?? null;
+        profile.notificationSoundPresetId = presetId;
+        profile.notificationSoundPresetSlug = fallback?.slug ?? null;
+      }
+      profile.effectiveNotificationSoundUrl = presetId
+        ? await this.notificationSounds.resolvePresetAudioUrl(presetId)
+        : null;
+    }
+
+    return profile;
   }
 
   private async toWandererCard(

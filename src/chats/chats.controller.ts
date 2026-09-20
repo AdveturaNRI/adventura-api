@@ -7,11 +7,12 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -159,6 +160,36 @@ export class ChatsController {
   @Post(':id/block')
   blockPeer(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
     return this.chatsService.blockPeer(user.id, conversationId);
+  }
+
+  @Post(':id/background')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: MAX_UPLOAD_FILE_SIZE_BYTES },
+    }),
+  )
+  setBackground(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Body() body: { kind?: string; presetId?: string },
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    const kindRaw = String(body?.kind ?? '').trim().toLowerCase();
+    const kind =
+      kindRaw === 'default' ||
+      kindRaw === 'preset' ||
+      kindRaw === 'custom' ||
+      kindRaw === 'clear'
+        ? kindRaw
+        : file
+          ? 'custom'
+          : 'clear';
+    return this.chatsService.setConversationBackground(user.id, conversationId, {
+      kind,
+      presetId: body?.presetId,
+      file: file ?? null,
+    });
   }
 
   @Delete(':id/block')

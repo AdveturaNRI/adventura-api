@@ -13,6 +13,9 @@ import {
 } from '../analytics/analytics.constants';
 import { AppSettingsService } from '../app-settings/app-settings.service';
 import { loadEsmModule } from '../common/load-esm-module';
+import { BroadcastService } from '../notifications/broadcast.service';
+import { NotificationSoundsService } from '../notification-sounds/notification-sounds.service';
+import { PushSubscriptionsService } from '../push-subscriptions/push-subscriptions.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import {
   buildQuestionnaireCompletionInput,
@@ -22,7 +25,7 @@ import {
 type ChartRange = 'day' | 'week' | 'month' | 'year' | 'all';
 type ChartBucket = 'hour' | 'day' | 'week' | 'month';
 
-type ChartPoint = { t: string; v: number };
+type ChartPoint = { t: string; v: number | null };
 
 type ChartSeriesDef = {
   id: string;
@@ -43,6 +46,10 @@ type ChartSeriesDef = {
     | 'users_online';
   /** Forward-fill gaps (stock gauges, not counters). */
   gauge?: boolean;
+  /** Do not forward-fill missing buckets (e.g. retention with empty cohort). */
+  noForwardFill?: boolean;
+  /** How to format header totals / tooltips. */
+  valueFormat?: 'count' | 'percent01' | 'percent100' | 'ratio' | 'duration_ms';
 };
 
 type ChartSeries = ChartSeriesDef & { points: ChartPoint[] };
@@ -390,85 +397,98 @@ const SERIES_DEFS: ChartSeriesDef[] = [
   {
     id: 'metric_stickiness',
     label: 'Stickiness',
-    description: 'DAU / WAU — коэффициент прилипаемости (0…1).',
+    description:
+      'DAU / MAU × 100 на дату (классический stickiness, %). Итог периода — последнее значение, не сумма.',
     color: '#134e4a',
     group: 'metrics',
     defaultOn: false,
     dailyMetric: DAILY_METRICS.STICKINESS,
     gauge: true,
+    valueFormat: 'percent100',
   },
   {
     id: 'metric_retention_d1',
     label: 'Retention D1',
     description:
-      'Доля зарегистрированных вчера, у кого была сессия сегодня (0…1).',
+      'Доля зарегистрированных вчера с сессией сегодня. Пустая когорта = нет данных (не 0%).',
     color: '#b45309',
     group: 'metrics',
     defaultOn: false,
     dailyMetric: DAILY_METRICS.RETENTION_D1,
     gauge: true,
+    noForwardFill: true,
+    valueFormat: 'percent01',
   },
   {
     id: 'metric_retention_d7',
     label: 'Retention D7',
     description:
-      'Доля зарегистрированных 7 дней назад с сессией сегодня (0…1).',
+      'Доля зарегистрированных 7 дней назад с сессией сегодня. Пустая когорта = нет данных.',
     color: '#c2410c',
     group: 'metrics',
     defaultOn: false,
     dailyMetric: DAILY_METRICS.RETENTION_D7,
     gauge: true,
+    noForwardFill: true,
+    valueFormat: 'percent01',
   },
   {
     id: 'metric_retention_d30',
     label: 'Retention D30',
     description:
-      'Доля зарегистрированных 30 дней назад с сессией сегодня (0…1).',
+      'Доля зарегистрированных 30 дней назад с сессией сегодня. Пустая когорта = нет данных.',
     color: '#9a3412',
     group: 'metrics',
     defaultOn: false,
     dailyMetric: DAILY_METRICS.RETENTION_D30,
     gauge: true,
+    noForwardFill: true,
+    valueFormat: 'percent01',
   },
   {
     id: 'metric_match_rate',
     label: 'Match rate',
-    description: 'matches / contacts за день (0…1).',
+    description: 'matches / contacts за день. Итог периода — последнее дневное значение.',
     color: '#be185d',
     group: 'metrics',
     defaultOn: false,
     dailyMetric: DAILY_METRICS.MATCH_RATE,
     gauge: true,
+    valueFormat: 'percent01',
   },
   {
     id: 'metric_time_to_match',
-    label: 'Time to match (ms)',
-    description: 'Среднее время от заявки до approve/матча за день.',
+    label: 'Time to match',
+    description: 'Среднее время от заявки до матча за день.',
     color: '#9d174d',
     group: 'metrics',
     defaultOn: false,
     dailyMetric: DAILY_METRICS.AVG_TIME_TO_MATCH_MS,
     gauge: true,
+    valueFormat: 'duration_ms',
   },
   {
     id: 'metric_apply_approve_rate',
     label: 'Approve rate',
-    description: 'approved / sent заявок за день (0…1).',
+    description: 'approved / sent заявок за день.',
     color: '#15803d',
     group: 'metrics',
     defaultOn: false,
     dailyMetric: DAILY_METRICS.APPLY_APPROVE_RATE,
     gauge: true,
+    valueFormat: 'percent01',
   },
   {
     id: 'metric_liquidity',
     label: 'Liquidity',
-    description: 'activeProfiles / openSeats.',
+    description:
+      'activeProfiles / openSeats — сколько анкет на одно свободное место в наборах (не %).',
     color: '#7e22ce',
     group: 'metrics',
     defaultOn: false,
     dailyMetric: DAILY_METRICS.LIQUIDITY,
     gauge: true,
+    valueFormat: 'ratio',
   },
   {
     id: 'metric_sessions_created',
@@ -519,22 +539,24 @@ const SERIES_DEFS: ChartSeriesDef[] = [
   {
     id: 'metric_fill_rate',
     label: 'Fill rate',
-    description: 'Средний fill_rate при старте/финише сессии (0…1).',
+    description: 'Средний fill_rate при старте/финише сессии. Итог — последнее дневное значение.',
     color: '#ca8a04',
     group: 'metrics',
     defaultOn: false,
     dailyMetric: DAILY_METRICS.AVG_FILL_RATE,
     gauge: true,
+    valueFormat: 'percent01',
   },
   {
     id: 'metric_time_to_fill',
-    label: 'Time to fill (ms)',
+    label: 'Time to fill',
     description: 'Среднее время сбора стола до старта сессии.',
     color: '#a16207',
     group: 'metrics',
     defaultOn: false,
     dailyMetric: DAILY_METRICS.AVG_TIME_TO_FILL_MS,
     gauge: true,
+    valueFormat: 'duration_ms',
   },
 ];
 
@@ -684,6 +706,7 @@ async function querySnapshotBuckets(
   bucket: ChartBucket,
 ): Promise<Map<string, Map<string, number>>> {
   const trunc = Prisma.raw(`date_trunc('${bucket}', "occurredAt")`);
+  // Last snapshot in each bucket (not AVG) — stock levels must not be averaged away.
   const rows = await prisma.$queryRaw<
     Array<{
       bucket: Date;
@@ -693,16 +716,16 @@ async function querySnapshotBuckets(
       users_online: number | null;
     }>
   >`
-    SELECT ${trunc} AS bucket,
-           AVG((props->>'users_total')::float) AS users_total,
-           AVG((props->>'profiles_active')::float) AS profiles_active,
-           AVG((props->>'profiles_free_only')::float) AS profiles_free_only,
-           AVG((props->>'users_online')::float) AS users_online
+    SELECT DISTINCT ON (${trunc})
+           ${trunc} AS bucket,
+           (props->>'users_total')::float AS users_total,
+           (props->>'profiles_active')::float AS profiles_active,
+           (props->>'profiles_free_only')::float AS profiles_free_only,
+           (props->>'users_online')::float AS users_online
     FROM analytics_events
     WHERE "occurredAt" >= ${from}
       AND name = ${ANALYTICS_EVENTS.PLATFORM_SNAPSHOT}
-    GROUP BY 1
-    ORDER BY 1 ASC
+    ORDER BY ${trunc} ASC, "occurredAt" DESC
   `;
 
   const byProp = new Map<string, Map<string, number>>();
@@ -730,6 +753,7 @@ function pointsFromSparse(
   bucketKeys: string[],
   sparse: Map<string, number> | undefined,
   gauge: boolean,
+  noForwardFill = false,
 ): ChartPoint[] {
   let last = 0;
   let seen = false;
@@ -738,6 +762,9 @@ function pointsFromSparse(
       last = sparse.get(t) ?? 0;
       seen = true;
       return { t, v: last };
+    }
+    if (noForwardFill) {
+      return { t, v: null };
     }
     if (gauge && seen) {
       return { t, v: last };
@@ -786,7 +813,12 @@ function buildSeriesForRange(
       }
       return {
         ...def,
-        points: pointsFromSparse(bucketKeys, merged, Boolean(def.gauge)),
+        points: pointsFromSparse(
+          bucketKeys,
+          merged,
+          Boolean(def.gauge),
+          Boolean(def.noForwardFill),
+        ),
       };
     }
 
@@ -891,13 +923,24 @@ async function buildAnalyticsDashboardData(prisma: PrismaService) {
       RangePayload
     >,
     seriesMeta: SERIES_DEFS.map(
-      ({ id, label, description, color, group, defaultOn }) => ({
+      ({
         id,
         label,
         description,
         color,
         group,
         defaultOn,
+        gauge,
+        valueFormat,
+      }) => ({
+        id,
+        label,
+        description,
+        color,
+        group,
+        defaultOn,
+        gauge: Boolean(gauge),
+        valueFormat: valueFormat ?? 'count',
       }),
     ),
   };
@@ -978,9 +1021,24 @@ export async function setupAdmin(
     'MetrikaSettings',
     resolveAdminComponent('metrika-settings'),
   );
+  const notificationSoundsComponent = componentLoader.add(
+    'NotificationSoundsAdmin',
+    resolveAdminComponent('notification-sounds-admin'),
+  );
+  const broadcastsComponent = componentLoader.add(
+    'BroadcastsAdmin',
+    resolveAdminComponent('broadcasts-admin'),
+  );
+  const pushSettingsComponent = componentLoader.add(
+    'PushSettings',
+    resolveAdminComponent('push-settings'),
+  );
 
   const analyticsNavigation = { name: 'Аналитика', icon: 'Activity' };
-  const appSettings = new AppSettingsService(prisma);
+  const appSettings = app.get(AppSettingsService);
+  const notificationSounds = app.get(NotificationSoundsService);
+  const broadcasts = app.get(BroadcastService);
+  const pushSubscriptions = app.get(PushSubscriptionsService);
 
   const admin = new AdminJS({
     rootPath: '/admin',
@@ -1000,6 +1058,9 @@ export async function setupAdmin(
           },
           pages: {
             metrikaSettings: 'Яндекс Метрика',
+            notificationSounds: 'Звуки уведомлений',
+            broadcasts: 'Массовые оповещения',
+            pushSettings: 'Web Push / FCM',
           },
           resources: {
             AnalyticsEvent: {
@@ -1086,6 +1147,247 @@ export async function setupAdmin(
             }
           }
           return appSettings.getYandexMetrikaAdmin();
+        },
+      },
+      notificationSounds: {
+        icon: 'Music',
+        component: notificationSoundsComponent,
+        handler: async (request: {
+          method?: string;
+          payload?: Record<string, unknown>;
+        }) => {
+          const method = (request.method ?? 'get').toLowerCase();
+          const asBool = (value: unknown, fallback = false) => {
+            if (value === undefined || value === null || value === '') {
+              return fallback;
+            }
+            if (typeof value === 'boolean') return value;
+            const raw = String(value).toLowerCase();
+            return raw === 'true' || raw === '1' || raw === 'on';
+          };
+          const decodeFile = (payload: Record<string, unknown>) => {
+            const base64 = String(payload.fileBase64 ?? '').trim();
+            if (!base64) return undefined;
+            return {
+              buffer: Buffer.from(base64, 'base64'),
+              mimetype: String(payload.fileMime ?? 'audio/mpeg'),
+              originalname: String(payload.fileName ?? 'notify.mp3'),
+            };
+          };
+
+          if (method === 'post') {
+            try {
+              const payload = request.payload ?? {};
+              const action = String(payload.action ?? '');
+              if (action === 'create') {
+                await notificationSounds.createPreset({
+                  slug: String(payload.slug ?? ''),
+                  label: String(payload.label ?? ''),
+                  description: String(payload.description ?? ''),
+                  sortOrder: Number(payload.sortOrder ?? 100) || 100,
+                  isDefault: asBool(payload.isDefault),
+                  file: decodeFile(payload),
+                });
+              } else if (action === 'upload') {
+                const id = String(payload.id ?? '');
+                const file = decodeFile(payload);
+                if (!file) {
+                  throw new Error('Файл не передан');
+                }
+                await notificationSounds.updatePreset(id, { file });
+              } else if (action === 'update') {
+                await notificationSounds.updatePreset(String(payload.id ?? ''), {
+                  label:
+                    payload.label !== undefined
+                      ? String(payload.label)
+                      : undefined,
+                  description:
+                    payload.description !== undefined
+                      ? String(payload.description)
+                      : undefined,
+                  sortOrder:
+                    payload.sortOrder !== undefined
+                      ? Number(payload.sortOrder) || 0
+                      : undefined,
+                  isActive:
+                    payload.isActive !== undefined
+                      ? asBool(payload.isActive)
+                      : undefined,
+                });
+              } else if (action === 'setDefault') {
+                await notificationSounds.setDefault(String(payload.id ?? ''));
+              } else if (action === 'delete') {
+                await notificationSounds.deletePreset(String(payload.id ?? ''));
+              } else {
+                throw new Error('Неизвестное действие');
+              }
+              return {
+                items: await notificationSounds.listAdmin(),
+                notice: { message: 'Сохранено', type: 'success' },
+              };
+            } catch (error) {
+              return {
+                items: await notificationSounds.listAdmin(),
+                notice: {
+                  message:
+                    error instanceof Error
+                      ? error.message
+                      : 'Не удалось выполнить действие',
+                  type: 'error',
+                },
+              };
+            }
+          }
+
+          return { items: await notificationSounds.listAdmin() };
+        },
+      },
+      broadcasts: {
+        icon: 'Send',
+        component: broadcastsComponent,
+        handler: async (request: {
+          method?: string;
+          payload?: Record<string, unknown>;
+        }) => {
+          const method = (request.method ?? 'get').toLowerCase();
+          const asBool = (value: unknown, fallback = false) => {
+            if (value === undefined || value === null || value === '') {
+              return fallback;
+            }
+            if (typeof value === 'boolean') return value;
+            const raw = String(value).toLowerCase();
+            return raw === 'true' || raw === '1' || raw === 'on';
+          };
+
+          if (method === 'post') {
+            try {
+              const payload = request.payload ?? {};
+              const action = String(payload.action ?? '');
+              const filters = {
+                audience: payload.audience,
+                emailVerified: payload.emailVerified,
+                rolesAny: payload.rolesAny,
+                playsOnline: payload.playsOnline,
+                prefersFreeOnly: payload.prefersFreeOnly,
+                hasLocation: payload.hasLocation,
+                cityId: payload.cityId,
+                lastSeenWithinDays: payload.lastSeenWithinDays,
+                registeredWithinDays: payload.registeredWithinDays,
+                hasPushSubscription: payload.hasPushSubscription,
+                minQuestionnaireStep: payload.minQuestionnaireStep,
+              };
+
+              if (action === 'preview') {
+                const preview = await broadcasts.preview(filters);
+                return {
+                  campaigns: await broadcasts.listCampaigns(),
+                  count: preview.count,
+                  filters: preview.filters,
+                };
+              }
+
+              if (action === 'send') {
+                const campaign = await broadcasts.send({
+                  title: String(payload.title ?? ''),
+                  body: String(payload.body ?? ''),
+                  filters,
+                  channels: {
+                    inApp: asBool(payload.sendInApp, true),
+                    push: asBool(payload.sendPush, true),
+                  },
+                });
+                return {
+                  campaigns: await broadcasts.listCampaigns(),
+                  campaign,
+                };
+              }
+
+              throw new Error('Неизвестное действие');
+            } catch (error) {
+              return {
+                campaigns: await broadcasts.listCampaigns(),
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : 'Не удалось выполнить действие',
+              };
+            }
+          }
+
+          return { campaigns: await broadcasts.listCampaigns() };
+        },
+      },
+      pushSettings: {
+        icon: 'Bell',
+        component: pushSettingsComponent,
+        handler: async (request: {
+          method?: string;
+          payload?: Record<string, unknown>;
+        }) => {
+          const method = (request.method ?? 'get').toLowerCase();
+
+          const buildStatus = async () => {
+            const publicKey = await pushSubscriptions.getPublicKey();
+            return appSettings.getFirebasePushAdmin({
+              subscribeEnabled: Boolean(publicKey.enabled && publicKey.publicKey),
+              sendEnabled: Boolean(publicKey.sendEnabled),
+              provider:
+                publicKey.provider === 'none'
+                  ? 'none'
+                  : publicKey.provider === 'webpush'
+                    ? 'webpush'
+                    : 'fcm',
+            });
+          };
+
+          if (method === 'post') {
+            try {
+              const payload = request.payload ?? {};
+              const clearSa =
+                String(payload.clearServiceAccount ?? '').toLowerCase() ===
+                  'true' ||
+                String(payload.clearServiceAccount ?? '') === '1';
+
+              await appSettings.saveFirebasePush({
+                webVapidKey:
+                  payload.webVapidKey !== undefined
+                    ? String(payload.webVapidKey)
+                    : undefined,
+                projectId:
+                  payload.projectId !== undefined
+                    ? String(payload.projectId)
+                    : undefined,
+                serviceAccountJson: clearSa
+                  ? ''
+                  : payload.serviceAccountJson !== undefined &&
+                      String(payload.serviceAccountJson).trim() !== ''
+                    ? String(payload.serviceAccountJson)
+                    : undefined,
+              });
+              await pushSubscriptions.reloadFirebaseFromSettings();
+              const next = await buildStatus();
+              return {
+                ...next,
+                notice: {
+                  message: next.subscribeEnabled
+                    ? 'VAPID сохранён — можно включать пуши в клиенте'
+                    : 'Сохранено, но VAPID всё ещё пустой',
+                  type: next.subscribeEnabled ? 'success' : 'error',
+                },
+              };
+            } catch (error) {
+              const current = await buildStatus();
+              return {
+                ...current,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : 'Не удалось сохранить',
+              };
+            }
+          }
+
+          return buildStatus();
         },
       },
     },
@@ -1261,35 +1563,47 @@ export async function setupAdmin(
   mkdirSync(adminJsDir, { recursive: true });
   const rollupBundlePath = join(adminJsDir, 'bundle.js');
   const entryPath = join(adminJsDir, 'entry.js');
-  // Stable copy outside /tmp and outside what a second initialize() may truncate.
+  // Stable copy next to compiled setup-admin.js (survives AdminJS re-init races).
   const stableBundlePath = join(__dirname, 'components.bundle.js');
+  const requiredComponentIds = [
+    'AnalyticsDashboard',
+    'MetrikaSettings',
+    'NotificationSoundsAdmin',
+    'BroadcastsAdmin',
+    'PushSettings',
+  ] as const;
 
-  if (process.env.NODE_ENV === 'production') {
-    await admin.initialize();
-    if (!existsSync(rollupBundlePath) || !existsSync(entryPath)) {
-      throw new Error(
-        `AdminJS bundle missing after initialize (${entryPath}, ${rollupBundlePath})`,
-      );
+  // Always initialize() — watch() is flaky under Docker (NODE_ENV=development in compose)
+  // and often finishes before rollup writes bundle.js → empty UserComponents.
+  await admin.initialize();
+
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    if (existsSync(rollupBundlePath) && existsSync(entryPath)) {
+      break;
     }
-    const entry = readFileSync(entryPath, 'utf8');
-    for (const id of ['AnalyticsDashboard', 'MetrikaSettings'] as const) {
-      if (!entry.includes(id)) {
-        throw new Error(`AdminJS entry.js missing component ${id}`);
-      }
-    }
-    copyFileSync(rollupBundlePath, stableBundlePath);
-    // Prevent @adminjs/express initializeAdmin() from rebuilding/truncating the bundle.
-    process.env.ADMIN_JS_SKIP_BUNDLE = 'true';
-    // eslint-disable-next-line no-console
-    console.log(
-      `AdminJS: custom components ready (${stableBundlePath}, ${Buffer.byteLength(readFileSync(stableBundlePath))} bytes)`,
+    await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+  }
+
+  if (!existsSync(rollupBundlePath) || !existsSync(entryPath)) {
+    throw new Error(
+      `AdminJS bundle missing after initialize (${entryPath}, ${rollupBundlePath})`,
     );
-  } else {
-    await admin.watch();
-    if (existsSync(rollupBundlePath)) {
-      copyFileSync(rollupBundlePath, stableBundlePath);
+  }
+
+  const entry = readFileSync(entryPath, 'utf8');
+  for (const id of requiredComponentIds) {
+    if (!entry.includes(id)) {
+      throw new Error(`AdminJS entry.js missing component ${id}`);
     }
   }
+
+  copyFileSync(rollupBundlePath, stableBundlePath);
+  // Prevent @adminjs/express initializeAdmin() from rebuilding/truncating the bundle.
+  process.env.ADMIN_JS_SKIP_BUNDLE = 'true';
+  // eslint-disable-next-line no-console
+  console.log(
+    `AdminJS: custom components ready (${stableBundlePath}, ${Buffer.byteLength(readFileSync(stableBundlePath))} bytes)`,
+  );
 
   const router = AdminJSExpress.buildAuthenticatedRouter(
     admin,
@@ -1321,27 +1635,30 @@ export async function setupAdmin(
   );
 
   const expressApp = app.getHttpAdapter().getInstance();
-  // AdminJS's own sendFile asset 404s under Nest when the rollup path drifts.
-  // Serve our stable copy first; never fall through to Nest JSON 404.
+  // Do NOT use res.sendFile for /tmp paths — Express often returns "Not Found"
+  // even when the file exists (root restriction / Docker). Serve buffer instead.
   expressApp.get(
     `${admin.options.rootPath}/frontend/assets/components.bundle.js`,
     (_req: Request, res: Response) => {
       const filePath = existsSync(stableBundlePath)
         ? stableBundlePath
         : rollupBundlePath;
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.type('application/javascript; charset=utf-8');
-      res.sendFile(filePath, (err) => {
-        if (err && !res.headersSent) {
-          res
-            .status(500)
-            .type('text/plain')
-            .send(
-              `AdminJS components bundle missing at ${filePath}: ${err.message}`,
-            );
-        }
-      });
+      try {
+        const body = readFileSync(filePath);
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.type('application/javascript; charset=utf-8');
+        res.send(body);
+      } catch (err) {
+        res
+          .status(500)
+          .type('text/plain')
+          .send(
+            `AdminJS components bundle missing at ${filePath}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+      }
     },
   );
   expressApp.use(admin.options.rootPath, router);

@@ -59,7 +59,7 @@ services:
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       PORT: '3000'
       DATABASE_URL: postgresql://adventura:adventura@postgres:5432/adventura?schema=public
       JWT_SECRET: local-development-jwt-secret-please-do-not-use-in-production-2026
@@ -87,6 +87,13 @@ services:
       S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-adventura-local-secret}
       S3_FORCE_PATH_STYLE: 'true'
       S3_SIGNED_URL_EXPIRES_SEC: '3600'
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@adventura.local}
+      FIREBASE_WEB_VAPID_KEY: ${FIREBASE_WEB_VAPID_KEY:-}
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
+      FIREBASE_SERVICE_ACCOUNT_PATH: ${FIREBASE_SERVICE_ACCOUNT_PATH:-}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-adventu-1ee37}
     depends_on:
       postgres:
         condition: service_healthy

@@ -3,6 +3,10 @@ import { AnalyticsPlatform, GameStatus, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  computeLiquidity,
+  computeStickinessPercent,
+} from './analytics-aggregation.util';
+import {
   ANALYTICS_EVENTS,
   DAILY_METRICS,
   ONLINE_WINDOW_MS,
@@ -107,6 +111,22 @@ export class AnalyticsAggregatorService implements OnModuleInit, OnModuleDestroy
     return { usersTotal, profilesActive, profilesFreeOnly, usersOnline };
   }
 
+  /**
+   * Recompute daily metrics for each UTC day in [from, to] inclusive.
+   * Does not delete raw analytics_events — only upserts AnalyticsDailyMetric rows.
+   */
+  async aggregateRange(from: Date, to: Date): Promise<{ days: number }> {
+    let cursor = utcDayStart(from);
+    const end = utcDayStart(to);
+    let days = 0;
+    while (cursor.getTime() <= end.getTime()) {
+      await this.aggregateDay(cursor);
+      days += 1;
+      cursor = addUtcDays(cursor, 1);
+    }
+    return { days };
+  }
+
   async aggregateDay(day: Date): Promise<void> {
     const from = utcDayStart(day);
     const to = addUtcDays(from, 1);
@@ -124,6 +144,7 @@ export class AnalyticsAggregatorService implements OnModuleInit, OnModuleDestroy
       fillSamples,
       timeToFillSamples,
       openGames,
+      usersTotal,
       activeProfiles,
       profilesFreeOnly,
       contacts,
@@ -184,6 +205,7 @@ export class AnalyticsAggregatorService implements OnModuleInit, OnModuleDestroy
         where: { status: GameStatus.RECRUITING },
         select: { maxPlayers: true, _count: { select: { players: true } } },
       }),
+      this.prisma.user.count({ where: { isGuest: false } }),
       this.countActiveProfiles(),
       this.countFreeOnlyProfiles(),
       this.prisma.analyticsEvent.count({
@@ -224,9 +246,8 @@ export class AnalyticsAggregatorService implements OnModuleInit, OnModuleDestroy
       0,
     );
 
-    const liquidity =
-      openSeats > 0 ? Number((activeProfiles / openSeats).toFixed(4)) : 0;
-    const stickiness = wau > 0 ? Number((dau / wau).toFixed(4)) : 0;
+    const liquidity = computeLiquidity(activeProfiles, openSeats);
+    const stickiness = computeStickinessPercent(dau, mau);
     const matchRate =
       contacts > 0 ? Number((matches / contacts).toFixed(4)) : matches > 0 ? 1 : 0;
     const applyApproveRate =
@@ -273,6 +294,7 @@ export class AnalyticsAggregatorService implements OnModuleInit, OnModuleDestroy
       this.upsertMetric(from, DAILY_METRICS.WAU, wau),
       this.upsertMetric(from, DAILY_METRICS.MAU, mau),
       this.upsertMetric(from, DAILY_METRICS.STICKINESS, stickiness),
+      this.upsertMetric(from, DAILY_METRICS.USERS_TOTAL, usersTotal),
       this.upsertMetric(from, DAILY_METRICS.PROFILES_ACTIVE, activeProfiles),
       this.upsertMetric(from, DAILY_METRICS.PROFILES_FREE_ONLY, profilesFreeOnly),
       this.upsertMetric(from, DAILY_METRICS.OPEN_SEATS, openSeats),
@@ -305,8 +327,12 @@ export class AnalyticsAggregatorService implements OnModuleInit, OnModuleDestroy
   /**
    * Among users registered on (day - n), share who had a session on `day`.
    * Stored on the activity day so the chart shows “who came back today”.
+   * Returns null when the cohort is empty / immature — do not treat as 0%.
    */
-  private async computeRetention(activityDay: Date, n: number): Promise<number> {
+  private async computeRetention(
+    activityDay: Date,
+    n: number,
+  ): Promise<number | null> {
     const cohortDay = addUtcDays(activityDay, -n);
     const cohortEnd = addUtcDays(cohortDay, 1);
     const activityEnd = addUtcDays(activityDay, 1);
@@ -329,7 +355,7 @@ export class AnalyticsAggregatorService implements OnModuleInit, OnModuleDestroy
       ),
     ];
     if (cohortIds.length === 0) {
-      return 0;
+      return null;
     }
 
     const returned = await this.prisma.analyticsEvent.findMany({
@@ -358,7 +384,18 @@ export class AnalyticsAggregatorService implements OnModuleInit, OnModuleDestroy
     return rows.length;
   }
 
-  private async upsertMetric(day: Date, metric: string, value: number) {
+  private async upsertMetric(
+    day: Date,
+    metric: string,
+    value: number | null,
+  ) {
+    if (value == null || !Number.isFinite(value)) {
+      // Drop stale gauge (e.g. old stickiness) when cohort/denominator is empty.
+      await this.prisma.analyticsDailyMetric.deleteMany({
+        where: { day, metric },
+      });
+      return;
+    }
     await this.prisma.analyticsDailyMetric.upsert({
       where: { day_metric: { day, metric } },
       create: { day, metric, value },

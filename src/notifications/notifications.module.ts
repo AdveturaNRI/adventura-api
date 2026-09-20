@@ -5,6 +5,7 @@ import { ChatsModule } from '../chats/chats.module';
 import { MediaModule } from '../media/media.module';
 import { PushSubscriptionsModule } from '../push-subscriptions/push-subscriptions.module';
 import { RealtimeModule } from '../realtime/realtime.module';
+import { BroadcastService } from './broadcast.service';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
 
@@ -17,7 +18,7 @@ import { NotificationsService } from './notifications.service';
     forwardRef(() => ChatsModule),
   ],
   controllers: [NotificationsController],
-  providers: [NotificationsService],
-  exports: [NotificationsService],
+  providers: [NotificationsService, BroadcastService],
+  exports: [NotificationsService, BroadcastService],
 })
 export class NotificationsModule {}
