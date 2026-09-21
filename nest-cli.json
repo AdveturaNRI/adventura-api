@@ -6,9 +6,13 @@
     "deleteOutDir": true,
     "assets": [
       {
-        "include": "admin/components/**/*",
-        "watchAssets": true,
-        "outDir": "dist/src"
+        "include": "admin/**/*.jsx",
+        "watchAssets": true
+      },
+      {
+        "include": "admin/**/*.jsx",
+        "outDir": "dist/src",
+        "watchAssets": true
       }
     ]
   }

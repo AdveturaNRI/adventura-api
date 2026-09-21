@@ -38,6 +38,7 @@ storage provider. These are not generated with `openssl`.
 ```bash
 printf %s '<S3_ACCESS_KEY_ID>' | docker secret create adventura_s3_access_key_id -
 printf %s '<S3_SECRET_ACCESS_KEY>' | docker secret create adventura_s3_secret_access_key -
+printf %s '<SMTP_PASS>' | docker secret create adventura_smtp_pass -
 ```
 
 ## 3. Set non-secret deployment variables
@@ -62,6 +63,15 @@ S3_BUCKET: your-private-bucket
 S3_SIGNED_URL_EXPIRES_SEC: "3600"
 S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_access_key_id
 S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
+
+# SMTP (password via Swarm secret)
+SMTP_HOST: mail.adventu.ru
+SMTP_PORT: "587"
+SMTP_SECURE: "false"
+SMTP_USER: notification@adventu.ru
+SMTP_FROM: Adventura <notification@adventu.ru>
+SMTP_PASS_FILE: /run/secrets/smtp_pass
+WEB_PUBLIC_URL: https://adventu.ru
 ```
 
 Attach these secrets to the `api` service:
@@ -70,6 +80,7 @@ Attach these secrets to the `api` service:
 secrets:
   - s3_access_key_id
   - s3_secret_access_key
+  - smtp_pass
 ```
 
 Declare them at stack level:
@@ -82,6 +93,9 @@ secrets:
   s3_secret_access_key:
     external: true
     name: adventura_s3_secret_access_key
+  smtp_pass:
+    external: true
+    name: adventura_smtp_pass
 ```
 
 ## 4. Deploy and verify

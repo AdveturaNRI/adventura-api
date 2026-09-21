@@ -31,11 +31,18 @@ export type UserProfile = {
   systems: string[];
   readyToLearnNew: boolean;
   openToAnySystem: boolean;
+  prefersFreeOnly: boolean;
   about: string | null;
   description: string | null;
   roles: string[];
   questionnaireStep: number;
   questionnaireCompletionPercent: number;
+  notificationSoundsEnabled: boolean;
+  notificationSoundPresetId: string | null;
+  notificationSoundPresetSlug: string | null;
+  useCustomNotificationSound: boolean;
+  customNotificationSoundUrl: string | null;
+  effectiveNotificationSoundUrl: string | null;
   avatar: ImageUrls | null;
   profileCard: ImageUrls | null;
   rewards: UserReward[];

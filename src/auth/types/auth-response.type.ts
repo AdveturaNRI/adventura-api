@@ -3,6 +3,7 @@ export type AuthUser = {
   email: string;
   nickname: string;
   isGuest: boolean;
+  emailVerified: boolean;
 };
 
 export type AuthResponse = {

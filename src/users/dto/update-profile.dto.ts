@@ -84,6 +84,10 @@ export class UpdateProfileDto {
   openToAnySystem?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  prefersFreeOnly?: boolean;
+
+  @IsOptional()
   @IsString()
   @MaxLength(1000)
   about?: string;
@@ -105,4 +109,16 @@ export class UpdateProfileDto {
   @Min(0)
   @Max(20)
   questionnaireStep?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  notificationSoundsEnabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  notificationSoundPresetId?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  useCustomNotificationSound?: boolean;
 }

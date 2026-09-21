@@ -11,6 +11,8 @@ import { ClubMemberRole, Prisma } from '@prisma/client';
 import { ImageProcessorService } from '../image/image-processor.service';
 import { MediaService } from '../media/media.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ANALYTICS_EVENTS } from '../analytics/analytics.constants';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { ClubLinkDto, CreateClubDto, ClubScheduleDayDto } from './dto/create-club.dto';
@@ -37,6 +39,7 @@ const CLUB_SELECT = {
   cityId: true,
   tags: true,
   links: true,
+  tablesCount: true,
   schedule: true,
   isPublished: true,
   deletedAt: true,
@@ -81,6 +84,7 @@ export class ClubsService {
     private readonly notificationsService: NotificationsService,
     private readonly rewardsService: RewardsService,
     private readonly config: ConfigService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   async listMap(viewerId: string): Promise<ClubListItem[]> {
@@ -173,6 +177,7 @@ export class ClubsService {
           cityId: dto.cityId || null,
           tags: this.normalizeTags(dto.tags),
           links: this.normalizeLinks(dto.links),
+          tablesCount: dto.tablesCount ?? 1,
           schedule,
           isPublished: dto.isPublished ?? true,
         },
@@ -194,6 +199,21 @@ export class ClubsService {
       );
     }
 
+    this.analytics.track({
+      name: ANALYTICS_EVENTS.CLUB_PROFILE_CREATED,
+      userId: ownerId,
+      props: {
+        club_id: created.id,
+        city_id: created.cityId,
+        tables_count: created.tablesCount,
+      },
+    });
+    this.analytics.track({
+      name: ANALYTICS_EVENTS.USER_ROLE_SELECTED,
+      userId: ownerId,
+      props: { roles: ['club_owner'] },
+    });
+
     return this.toListItem(created, ownerId, true);
   }
 
@@ -213,10 +233,21 @@ export class ClubsService {
         cityId: dto.cityId || null,
         tags: this.normalizeTags(dto.tags),
         links: this.normalizeLinks(dto.links),
+        tablesCount: dto.tablesCount ?? undefined,
         schedule,
         isPublished: dto.isPublished ?? true,
       },
       select: CLUB_SELECT,
+    });
+
+    this.analytics.track({
+      name: ANALYTICS_EVENTS.CLUB_PROFILE_UPDATED,
+      userId: ownerId,
+      props: {
+        club_id: updated.id,
+        city_id: updated.cityId,
+        tables_count: updated.tablesCount,
+      },
     });
 
     return this.toListItem(updated, ownerId, true);
@@ -1103,6 +1134,7 @@ export class ClubsService {
       tags: club.tags,
       links: this.parseLinks(club.links),
       schedule: this.parseSchedule(club.schedule),
+      tablesCount: club.tablesCount,
       isPublished: club.isPublished,
       coverUrl: coverUrls.card || coverUrls.original || coverUrls.cardThumb || null,
       galleryUrls: galleryUrls.filter(Boolean),

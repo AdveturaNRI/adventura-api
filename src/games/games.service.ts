@@ -18,6 +18,10 @@ import {
   normalizeGameSystemName,
 } from '../common/utils/game-system-name.utils';
 import {
+  ANALYTICS_EVENTS,
+} from '../analytics/analytics.constants';
+import { AnalyticsService } from '../analytics/analytics.service';
+import {
   endOfZonedIsoDate,
   getZonedDateTimeParts,
   normalizeTimezone,
@@ -58,6 +62,7 @@ const GAME_SELECT = {
   kind: true,
   status: true,
   isOnline: true,
+  clubId: true,
   scheduledAt: true,
   timezone: true,
   priceRub: true,
@@ -102,6 +107,7 @@ type GameRow = {
   kind: GameKind;
   status: GameStatus;
   isOnline: boolean;
+  clubId: string | null;
   scheduledAt: Date | null;
   timezone: string;
   priceRub: number | null;
@@ -124,6 +130,7 @@ export class GamesService {
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
     private readonly chatsService: ChatsService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   async listMine(ownerId: string): Promise<GameListItem[]> {
@@ -426,6 +433,12 @@ export class GamesService {
       title: game.title,
     });
 
+    this.analytics.track({
+      name: ANALYTICS_EVENTS.GAME_APPLICATION_SENT,
+      userId: viewerId,
+      props: { game_id: gameId, owner_id: game.ownerId },
+    });
+
     return this.toListItem(game, {
       owner: game.owner,
       hidePendingCount: true,
@@ -496,6 +509,8 @@ export class GamesService {
       }
     }
 
+    const clubId = await this.resolveClubId(ownerId, dto.clubId);
+
     const created = await this.prisma.game.create({
       data: {
         ownerId,
@@ -508,6 +523,7 @@ export class GamesService {
         status: GameStatus.RECRUITING,
         isOnline: dto.isOnline,
         cityId: dto.isOnline ? null : dto.cityId || null,
+        clubId,
         scheduledAt,
         timezone: dto.timezone?.trim() || 'Europe/Moscow',
         priceRub: dto.isFree ? null : dto.priceRub ?? null,
@@ -517,6 +533,30 @@ export class GamesService {
       },
       select: GAME_SELECT,
     });
+
+    const hasCover = false;
+    this.analytics.track({
+      name: ANALYTICS_EVENTS.GAME_LISTING_CREATED,
+      userId: ownerId,
+      props: {
+        game_id: created.id,
+        system: created.userGameSystem.name,
+        is_paid: created.priceRub != null,
+        price_rub: created.priceRub ?? 0,
+        max_players: created.maxPlayers,
+        is_online: created.isOnline,
+        has_screenshots: hasCover,
+        club_id: created.clubId,
+      },
+    });
+
+    if (created.clubId) {
+      this.analytics.track({
+        name: ANALYTICS_EVENTS.CLUB_GAME_LINKED,
+        userId: ownerId,
+        props: { game_id: created.id, club_id: created.clubId },
+      });
+    }
 
     return this.toListItem(created);
   }
@@ -633,7 +673,12 @@ export class GamesService {
     const nextStatus = this.mapStatus(dto.status);
     const current = await this.prisma.game.findFirst({
       where: { id: gameId, ownerId },
-      select: { status: true },
+      select: {
+        status: true,
+        createdAt: true,
+        maxPlayers: true,
+        _count: { select: { players: true } },
+      },
     });
 
     if (!current) {
@@ -648,6 +693,46 @@ export class GamesService {
       where: { id: gameId },
       data: { status: nextStatus },
     });
+
+    const fillRate =
+      current.maxPlayers > 0
+        ? Number((current._count.players / current.maxPlayers).toFixed(4))
+        : 0;
+    const timeToFillMs = Date.now() - current.createdAt.getTime();
+
+    if (
+      nextStatus === GameStatus.CLOSED &&
+      current.status !== GameStatus.CLOSED
+    ) {
+      this.analytics.track({
+        name: ANALYTICS_EVENTS.GAME_SESSION_STARTED,
+        userId: ownerId,
+        props: {
+          game_id: gameId,
+          fill_rate: fillRate,
+          time_to_fill_ms: timeToFillMs,
+          players: current._count.players,
+          max_players: current.maxPlayers,
+        },
+      });
+    }
+
+    if (
+      nextStatus === GameStatus.FINISHED &&
+      current.status !== GameStatus.FINISHED
+    ) {
+      this.analytics.track({
+        name: ANALYTICS_EVENTS.GAME_SESSION_COMPLETED,
+        userId: ownerId,
+        props: {
+          game_id: gameId,
+          fill_rate: fillRate,
+          players: current._count.players,
+          max_players: current.maxPlayers,
+          human_sessions: current._count.players,
+        },
+      });
+    }
 
     return this.getManage(ownerId, gameId);
   }
@@ -688,7 +773,7 @@ export class GamesService {
         gameId,
         status: GameApplicationStatus.PENDING,
       },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, createdAt: true },
     });
 
     if (!application) {
@@ -728,6 +813,28 @@ export class GamesService {
     });
 
     await this.chatsService.addGameChatParticipant(gameId, application.userId);
+
+    this.analytics.track({
+      name: ANALYTICS_EVENTS.GAME_APPLICATION_APPROVED,
+      userId: ownerId,
+      props: {
+        game_id: gameId,
+        applicant_id: application.userId,
+        application_id: application.id,
+      },
+    });
+    this.analytics.track({
+      name: ANALYTICS_EVENTS.PLAYER_MATCH_COMPLETED,
+      userId: application.userId,
+      props: {
+        game_id: gameId,
+        via: 'application_accepted',
+        time_to_match_ms: Math.max(
+          0,
+          Date.now() - application.createdAt.getTime(),
+        ),
+      },
+    });
 
     return this.getManage(ownerId, gameId);
   }
@@ -769,6 +876,16 @@ export class GamesService {
     await this.notificationsService.notifyGameApplicationRejected(ownerId, application.userId, {
       id: game.id,
       title: game.title,
+    });
+
+    this.analytics.track({
+      name: ANALYTICS_EVENTS.GAME_APPLICATION_REJECTED,
+      userId: ownerId,
+      props: {
+        game_id: gameId,
+        applicant_id: application.userId,
+        application_id: application.id,
+      },
     });
 
     return this.getManage(ownerId, gameId);
@@ -858,6 +975,15 @@ export class GamesService {
       }
     }
 
+    const previous = await this.prisma.game.findFirst({
+      where: { id: gameId, ownerId },
+      select: { clubId: true },
+    });
+    const clubId =
+      dto.clubId !== undefined
+        ? await this.resolveClubId(ownerId, dto.clubId)
+        : previous?.clubId ?? null;
+
     const updated = await this.prisma.game.update({
       where: { id: gameId },
       data: {
@@ -869,6 +995,7 @@ export class GamesService {
         kind: dto.kind === CreateGameKindDto.CAMPAIGN ? GameKind.CAMPAIGN : GameKind.ONESHOT,
         isOnline: dto.isOnline,
         cityId: dto.isOnline ? null : dto.cityId || null,
+        clubId,
         scheduledAt,
         timezone: dto.timezone?.trim() || 'Europe/Moscow',
         priceRub: dto.isFree ? null : dto.priceRub ?? null,
@@ -880,6 +1007,14 @@ export class GamesService {
     });
 
     await this.chatsService.renameGameChat(gameId, updated.title);
+
+    if (updated.clubId && updated.clubId !== previous?.clubId) {
+      this.analytics.track({
+        name: ANALYTICS_EVENTS.CLUB_GAME_LINKED,
+        userId: ownerId,
+        props: { game_id: updated.id, club_id: updated.clubId },
+      });
+    }
 
     return this.toListItem(updated);
   }
@@ -1045,6 +1180,33 @@ export class GamesService {
     if (!game) {
       throw new NotFoundException('Игра не найдена');
     }
+  }
+
+  private async resolveClubId(
+    ownerId: string,
+    clubId: string | null | undefined,
+  ): Promise<string | null> {
+    if (clubId === undefined || clubId === null || clubId === '') {
+      return null;
+    }
+
+    const club = await this.prisma.club.findFirst({
+      where: {
+        id: clubId,
+        deletedAt: null,
+        OR: [
+          { ownerId },
+          { members: { some: { userId: ownerId } } },
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (!club) {
+      throw new BadRequestException('Клуб не найден или нет доступа');
+    }
+
+    return club.id;
   }
 
   private async resolveUserGameSystem(ownerId: string, rawName: string): Promise<string> {

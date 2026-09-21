@@ -70,9 +70,15 @@ export const ADMIN_LOCALE_RU = {
     UserCosmeticUnlock: 'Косметика',
     DailyUsageCounter: 'Лимиты за день',
     Media: 'Медиа',
+    AnalyticsEvent: 'События',
+    AnalyticsDailyMetric: 'Суточные метрики',
   },
   pages: {
     grantRewards: 'Выдать награду',
+    metrikaSettings: 'Яндекс Метрика',
+    notificationSounds: 'Звуки уведомлений',
+    broadcasts: 'Массовые оповещения',
+    pushSettings: 'Web Push / FCM',
   },
   properties: {
     length: 'Длина',
@@ -173,6 +179,25 @@ export const ADMIN_LOCALE_RU = {
         grantedAt: 'Выдано',
         user: 'Игрок',
         userId: 'Игрок',
+      },
+    },
+    AnalyticsEvent: {
+      properties: {
+        name: 'Событие',
+        userId: 'Пользователь',
+        platform: 'Платформа',
+        appVersion: 'Версия',
+        occurredAt: 'Когда',
+        props: 'Свойства',
+        createdAt: 'Записано',
+      },
+    },
+    AnalyticsDailyMetric: {
+      properties: {
+        day: 'День',
+        metric: 'Метрика',
+        value: 'Значение',
+        updatedAt: 'Обновлено',
       },
     },
   },

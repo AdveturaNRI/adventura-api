@@ -147,6 +147,26 @@ export class UsersController {
     return this.usersService.deleteProfileCard(user.id);
   }
 
+  @Post('me/notification-sound')
+  @UseInterceptors(
+    FileInterceptor('sound', {
+      storage: memoryStorage(),
+      limits: { fileSize: 256 * 1024 },
+    }),
+  )
+  uploadNotificationSound(
+    @CurrentUser() user: AuthUser,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.usersService.uploadNotificationSound(user.id, file);
+  }
+
+  @Delete('me/notification-sound')
+  @HttpCode(200)
+  deleteNotificationSound(@CurrentUser() user: AuthUser) {
+    return this.usersService.deleteNotificationSound(user.id);
+  }
+
   @Delete('me/questionnaire')
   @HttpCode(200)
   deleteQuestionnaire(@CurrentUser() user: AuthUser) {

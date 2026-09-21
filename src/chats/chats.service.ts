@@ -19,6 +19,8 @@ import { AccessToken } from 'livekit-server-sdk';
 
 import { ImageProcessorService } from '../image/image-processor.service';
 import type { ImageUrls } from '../image/image.types';
+import { ANALYTICS_EVENTS } from '../analytics/analytics.constants';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { MediaService } from '../media/media.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PushSubscriptionsService } from '../push-subscriptions/push-subscriptions.service';
@@ -39,6 +41,7 @@ import type { SendDiceRollDto } from './dto/send-dice-roll.dto';
 const MESSAGE_ATTACHMENT_COLLECTION = 'attachment';
 const MESSAGE_ATTACHMENT_PREFIX = 'attachment-';
 const MESSAGE_IMAGE_VARIANTS = ['thumb', 'medium', 'large', 'original'] as const;
+const CHAT_BACKGROUND_IMAGE_VARIANTS = ['medium', 'large', 'original'] as const;
 const MAX_MESSAGE_ATTACHMENTS = 10;
 const MEMBERS_PREVIEW_LIMIT = 3;
 /** Stop ringing callees; call stays open for late join. */
@@ -67,6 +70,22 @@ type ActiveVoiceCall = {
   /** Ends the lobby if nobody else joined. */
   waitTimer?: ReturnType<typeof setTimeout>;
 };
+
+function toConversationBackground(row: {
+  backgroundKind: string | null;
+  backgroundPresetId: string | null;
+  backgroundUrl: string | null;
+}): ConversationBackgroundDto | null {
+  const kind = row.backgroundKind;
+  if (kind !== 'default' && kind !== 'preset' && kind !== 'custom') {
+    return null;
+  }
+  return {
+    kind,
+    presetId: kind === 'preset' ? row.backgroundPresetId : null,
+    url: kind === 'custom' ? row.backgroundUrl : null,
+  };
+}
 
 export type ChatAttachmentKind = 'image' | 'audio' | 'file';
 
@@ -143,6 +162,12 @@ export type ChatMessageDto = {
   } | null;
 };
 
+export type ConversationBackgroundDto = {
+  kind: 'default' | 'preset' | 'custom';
+  presetId: string | null;
+  url: string | null;
+};
+
 export type ConversationListItem = {
   id: string;
   type: 'direct' | 'group';
@@ -169,6 +194,8 @@ export type ConversationListItem = {
   blockedMe: boolean;
   isPinned: boolean;
   pinSortOrder: number | null;
+  /** Shared wallpaper for all participants; null = personal settings. */
+  background: ConversationBackgroundDto | null;
   updatedAt: string;
 };
 
@@ -286,6 +313,7 @@ export class ChatsService {
     private readonly pushSubscriptions: PushSubscriptionsService,
     private readonly config: ConfigService,
     private readonly rewardsService: RewardsService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   async findOrCreateWith(userId: string, peerUserId: string) {
@@ -310,7 +338,10 @@ export class ChatsService {
       },
     });
 
+    let created = false;
+
     if (!conversation) {
+      created = true;
       conversation = await this.prisma.conversation.create({
         data: {
           type: ConversationType.DIRECT,
@@ -337,6 +368,17 @@ export class ChatsService {
         },
         create: { conversationId: conversation.id, userId, lastReadAt: new Date() },
         update: { hiddenAt: null },
+      });
+    }
+
+    if (created) {
+      this.analytics.track({
+        name: ANALYTICS_EVENTS.PLAYER_PROFILE_CONTACTED,
+        userId,
+        props: {
+          profile_user_id: peerUserId,
+          conversation_id: conversation.id,
+        },
       });
     }
 
@@ -1446,6 +1488,7 @@ export class ChatsService {
           blockedMe: false,
           isPinned: Boolean(myRead?.pinnedAt),
           pinSortOrder: myRead?.pinSortOrder ?? null,
+          background: toConversationBackground(conversation),
           updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
         });
         continue;
@@ -1484,6 +1527,7 @@ export class ChatsService {
         blockedMe,
         isPinned: Boolean(myRead?.pinnedAt),
         pinSortOrder: myRead?.pinSortOrder ?? null,
+        background: toConversationBackground(conversation),
         updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
       });
     }
@@ -2796,6 +2840,104 @@ export class ChatsService {
     });
   }
 
+  async setConversationBackground(
+    userId: string,
+    conversationId: string,
+    input: {
+      kind: 'default' | 'preset' | 'custom' | 'clear';
+      presetId?: string | null;
+      file?: Express.Multer.File | null;
+    },
+  ): Promise<ConversationListItem> {
+    await this.assertParticipant(userId, conversationId);
+    const participantIds = await this.getParticipantIds(conversationId);
+
+    let backgroundKind: string | null = null;
+    let backgroundPresetId: string | null = null;
+    let backgroundUrl: string | null = null;
+
+    if (input.kind === 'clear') {
+      await this.mediaService.deleteCollection({
+        entityType: 'Conversation',
+        entityId: conversationId,
+        collection: 'background',
+      });
+    } else if (input.kind === 'default') {
+      backgroundKind = 'default';
+      await this.mediaService.deleteCollection({
+        entityType: 'Conversation',
+        entityId: conversationId,
+        collection: 'background',
+      });
+    } else if (input.kind === 'preset') {
+      const presetId = input.presetId?.trim();
+      if (!presetId) {
+        throw new BadRequestException('Нужен presetId');
+      }
+      backgroundKind = 'preset';
+      backgroundPresetId = presetId;
+      await this.mediaService.deleteCollection({
+        entityType: 'Conversation',
+        entityId: conversationId,
+        collection: 'background',
+      });
+    } else if (input.kind === 'custom') {
+      const file = input.file;
+      if (!file?.buffer?.length) {
+        throw new BadRequestException('Нужен файл изображения');
+      }
+      if (!file.mimetype?.startsWith('image/')) {
+        throw new BadRequestException('Фон должен быть изображением');
+      }
+      const variants = await this.imageProcessor.processImage(
+        file.buffer,
+        file.mimetype,
+        [...CHAT_BACKGROUND_IMAGE_VARIANTS],
+      );
+      await this.mediaService.replaceCollection(
+        {
+          entityType: 'Conversation',
+          entityId: conversationId,
+          collection: 'background',
+        },
+        variants,
+      );
+      const media = await this.mediaService.getCollection({
+        entityType: 'Conversation',
+        entityId: conversationId,
+        collection: 'background',
+      });
+      const urls = await this.mediaService.getCollectionUrls(media);
+      const url = urls.original ?? urls.large ?? urls.medium ?? null;
+      if (!url) {
+        throw new BadRequestException('Не удалось сохранить фон');
+      }
+      backgroundKind = 'custom';
+      backgroundUrl = url;
+    } else {
+      throw new BadRequestException('Неизвестный kind');
+    }
+
+    await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: {
+        backgroundKind,
+        backgroundPresetId,
+        backgroundUrl,
+      },
+    });
+
+    const summaries = await Promise.all(
+      participantIds.map((id) => this.getConversationSummary(id, conversationId)),
+    );
+    for (let i = 0; i < participantIds.length; i += 1) {
+      this.realtime.emitConversationUpdated([participantIds[i]], summaries[i]);
+    }
+
+    const mine = summaries.find((_, i) => participantIds[i] === userId);
+    return mine ?? summaries[0];
+  }
+
   private async getConversationSummary(
     userId: string,
     conversationId: string,
@@ -2877,6 +3019,7 @@ export class ChatsService {
         blockedMe: false,
         isPinned: Boolean(myRead?.pinnedAt),
         pinSortOrder: myRead?.pinSortOrder ?? null,
+        background: toConversationBackground(conversation),
         updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
       };
     }
@@ -2929,6 +3072,7 @@ export class ChatsService {
       blockedMe: flags.blockedMe,
       isPinned: Boolean(myRead?.pinnedAt),
       pinSortOrder: myRead?.pinSortOrder ?? null,
+      background: toConversationBackground(conversation),
       updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
     };
   }

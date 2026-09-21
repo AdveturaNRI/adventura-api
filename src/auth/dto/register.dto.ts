@@ -1,5 +1,6 @@
 import {
   IsEmail,
+  IsOptional,
   IsString,
   Matches,
   MaxLength,
@@ -21,4 +22,9 @@ export class RegisterDto {
   @IsString()
   @MinLength(8, { message: 'Пароль должен быть не короче 8 символов' })
   password!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  acquisitionSource?: string;
 }

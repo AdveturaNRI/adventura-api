@@ -25,6 +25,7 @@ load_secret_file ADMIN_COOKIE_SECRET
 load_secret_file ADMIN_SESSION_SECRET
 load_secret_file S3_ACCESS_KEY_ID
 load_secret_file S3_SECRET_ACCESS_KEY
+load_secret_file SMTP_PASS
 
 # Prisma 6 reads a connection URL from its schema. Deployment supplies the
 # connection pieces separately; construct the URL only in this process.

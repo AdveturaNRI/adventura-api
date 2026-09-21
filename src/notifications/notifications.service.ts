@@ -17,7 +17,8 @@ export type NotificationDto = {
     | 'game_application_rejected'
     | 'game_player_removed'
     | 'game_deleted'
-    | 'club_deleted';
+    | 'club_deleted'
+    | 'system_announcement';
   actor: {
     id: string;
     nickname: string;
@@ -27,11 +28,43 @@ export type NotificationDto = {
   messageText: string;
   subject: string;
   refId: string;
+  /** In-app / push deep link for the related entity. */
+  href: string | null;
   canAddBack: boolean;
   readAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
+
+/** Keep in sync with client `getPortalNotificationHref`. */
+export function resolveNotificationHref(input: {
+  type: NotificationDto['type'];
+  refId?: string | null;
+  actor?: { id?: string | null } | null;
+}): string | null {
+  const refId = input.refId?.trim() || '';
+  const actorId = input.actor?.id?.trim() || '';
+
+  switch (input.type) {
+    case 'game_application':
+      return refId ? `/games-manage?id=${encodeURIComponent(refId)}` : '/my-games';
+    case 'game_application_accepted':
+    case 'game_application_rejected':
+    case 'game_player_removed':
+      return refId ? `/games/${encodeURIComponent(refId)}` : '/games';
+    case 'game_deleted':
+      return '/my-games';
+    case 'club_deleted':
+      return '/my-clubs';
+    case 'favorite_received':
+    case 'favorite_returned':
+      return actorId ? `/users/${encodeURIComponent(actorId)}` : null;
+    case 'system_announcement':
+      return null;
+    default:
+      return null;
+  }
+}
 
 @Injectable()
 export class NotificationsService {
@@ -338,6 +371,7 @@ export class NotificationsService {
       const dto = await this.toDto(notification);
       this.realtime.emitNotificationNew(userId, dto);
       await this.emitUnread(userId);
+      void this.pushPortalNotification(userId, dto);
       results.push(dto);
     }
     return results;
@@ -393,29 +427,58 @@ export class NotificationsService {
     const subject = dto.subject.trim();
     let title = 'Adventura';
     let body = `${actorName} ${dto.actionText}`.trim();
-    let url = '/notifications';
+    const url = dto.href ?? '/notifications';
     const tag = `notif:${dto.type}:${dto.refId || dto.actor.id}`;
 
-    if (dto.type === 'game_application') {
+    if (dto.type === 'system_announcement') {
+      title = subject || 'Adventura';
+      body = dto.messageText.trim() || subject || 'Новое объявление';
+    } else if (dto.type === 'game_application') {
       title = subject ? `Новая заявка на игру «${subject}»` : 'Новая заявка на игру';
       body = actorName;
-      url = `/games-manage?id=${encodeURIComponent(dto.refId)}`;
     } else if (
       dto.type === 'game_application_accepted' ||
       dto.type === 'game_application_rejected' ||
       dto.type === 'game_player_removed' ||
-      dto.type === 'game_deleted'
+      dto.type === 'game_deleted' ||
+      dto.type === 'club_deleted'
     ) {
-      title = subject || 'Игра';
+      title = subject || 'Adventura';
       body = `${actorName} ${dto.actionText}`.trim();
-      url = dto.refId ? `/games/${encodeURIComponent(dto.refId)}` : '/notifications';
     } else if (dto.type === 'favorite_received' || dto.type === 'favorite_returned') {
       title = actorName;
       body = `${dto.actionText}${dto.messageText}`.trim();
-      url = `/users/${encodeURIComponent(dto.actor.id)}`;
     }
 
     await this.pushSubscriptions.sendToUser(userId, { title, body, tag, url });
+  }
+
+  /** Used by BroadcastService — keep realtime unread in sync. */
+  async emitUnreadPublic(userId: string) {
+    return this.emitUnread(userId);
+  }
+
+  async pushPortalNotificationPublic(userId: string, dto: NotificationDto) {
+    return this.pushPortalNotification(userId, dto);
+  }
+
+  async toDtoPublic(
+    item: {
+      id: string;
+      type: NotificationType;
+      userId: string;
+      actorId: string;
+      subject: string;
+      body?: string;
+      refId: string;
+      readAt: Date | null;
+      createdAt: Date;
+      updatedAt: Date;
+      actor: { id: string; nickname: string };
+    },
+    favoritedActorIds?: Set<string>,
+  ) {
+    return this.toDto(item, favoritedActorIds);
   }
 
   private async emitUnread(userId: string) {
@@ -433,6 +496,7 @@ export class NotificationsService {
       userId: string;
       actorId: string;
       subject: string;
+      body?: string;
       refId: string;
       readAt: Date | null;
       createdAt: Date;
@@ -443,8 +507,36 @@ export class NotificationsService {
   ): Promise<NotificationDto> {
     const avatarUrl = await this.getAvatarUrl(item.actor.id);
 
+    const withHref = (
+      dto: Omit<NotificationDto, 'href'>,
+    ): NotificationDto => ({
+      ...dto,
+      href: resolveNotificationHref(dto),
+    });
+
+
+    if (item.type === NotificationType.SYSTEM_ANNOUNCEMENT) {
+      return withHref({
+        id: item.id,
+        type: 'system_announcement',
+        actor: {
+          id: item.actor.id,
+          nickname: item.actor.nickname || 'Adventura',
+          avatarUrl,
+        },
+        actionText: 'объявление',
+        messageText: (item.body ?? '').trim(),
+        subject: item.subject.trim() || 'Adventura',
+        refId: item.refId,
+        canAddBack: false,
+        readAt: item.readAt?.toISOString() ?? null,
+        createdAt: item.createdAt.toISOString(),
+        updatedAt: item.updatedAt.toISOString(),
+});
+    }
+
     if (item.type === NotificationType.GAME_APPLICATION) {
-      return {
+      return withHref({
         id: item.id,
         type: 'game_application',
         actor: {
@@ -460,11 +552,11 @@ export class NotificationsService {
         readAt: item.readAt?.toISOString() ?? null,
         createdAt: item.createdAt.toISOString(),
         updatedAt: item.updatedAt.toISOString(),
-      };
+});
     }
 
     if (item.type === NotificationType.GAME_APPLICATION_ACCEPTED) {
-      return {
+      return withHref({
         id: item.id,
         type: 'game_application_accepted',
         actor: {
@@ -480,11 +572,11 @@ export class NotificationsService {
         readAt: item.readAt?.toISOString() ?? null,
         createdAt: item.createdAt.toISOString(),
         updatedAt: item.updatedAt.toISOString(),
-      };
+});
     }
 
     if (item.type === NotificationType.GAME_APPLICATION_REJECTED) {
-      return {
+      return withHref({
         id: item.id,
         type: 'game_application_rejected',
         actor: {
@@ -500,11 +592,11 @@ export class NotificationsService {
         readAt: item.readAt?.toISOString() ?? null,
         createdAt: item.createdAt.toISOString(),
         updatedAt: item.updatedAt.toISOString(),
-      };
+});
     }
 
     if (item.type === NotificationType.GAME_PLAYER_REMOVED) {
-      return {
+      return withHref({
         id: item.id,
         type: 'game_player_removed',
         actor: {
@@ -520,12 +612,12 @@ export class NotificationsService {
         readAt: item.readAt?.toISOString() ?? null,
         createdAt: item.createdAt.toISOString(),
         updatedAt: item.updatedAt.toISOString(),
-      };
+});
     }
 
 
     if (item.type === NotificationType.GAME_DELETED) {
-      return {
+      return withHref({
         id: item.id,
         type: 'game_deleted',
         actor: {
@@ -541,11 +633,11 @@ export class NotificationsService {
         readAt: item.readAt?.toISOString() ?? null,
         createdAt: item.createdAt.toISOString(),
         updatedAt: item.updatedAt.toISOString(),
-      };
+});
     }
 
     if (item.type === NotificationType.CLUB_DELETED) {
-      return {
+      return withHref({
         id: item.id,
         type: 'club_deleted',
         actor: {
@@ -561,7 +653,7 @@ export class NotificationsService {
         readAt: item.readAt?.toISOString() ?? null,
         createdAt: item.createdAt.toISOString(),
         updatedAt: item.updatedAt.toISOString(),
-      };
+});
     }
 
     const isReturned = item.type === NotificationType.FAVORITE_RETURNED;
@@ -579,7 +671,7 @@ export class NotificationsService {
           }).then((row) => row?.type === 'FAVORITE'),
         );
 
-    return {
+    return withHref({
       id: item.id,
       type: isReturned ? 'favorite_returned' : 'favorite_received',
       actor: {
@@ -597,7 +689,7 @@ export class NotificationsService {
       readAt: item.readAt?.toISOString() ?? null,
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
-    };
+    });
   }
 
   private async getAvatarUrl(userId: string): Promise<string | null> {
