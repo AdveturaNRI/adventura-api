@@ -51,14 +51,6 @@ import type {
   UserRewardDto,
 } from './rewards.types';
 
-const FRAME_PRIORITY: RewardBadgeTypeId[] = [
-  'founding_dm',
-  'alpha_tester',
-  'bug_hunter',
-  'tavern_keeper',
-  'early_arrival',
-];
-
 const COSMETIC_OFF = 'none';
 
 type EquippedCosmetics = {
@@ -175,14 +167,14 @@ function ownedDiceSkinIds(
   return owned;
 }
 
-function autoFrameId(badges: RewardBadgeTypeId[]): string | null {
-  const primary = FRAME_PRIORITY.find((badge) => badges.includes(badge)) ?? null;
-  return primary ? FRAME_BY_BADGE[primary] : null;
-}
-
-function autoAuraId(badges: RewardBadgeTypeId[]): string | null {
-  const primary = FRAME_PRIORITY.find((badge) => badges.includes(badge)) ?? null;
-  return primary ? AURA_BY_BADGE[primary] : null;
+function resolveEquipped(equipped: string | null | undefined, owned: Set<string>): string | null {
+  if (equipped === COSMETIC_OFF) {
+    return null;
+  }
+  if (equipped && owned.has(equipped)) {
+    return equipped;
+  }
+  return null;
 }
 
 function parseStoredBadgeTypes(value: unknown): string[] | null {
@@ -204,16 +196,6 @@ function resolveVisibleBadges(
   }
   const allowed = new Set(owned);
   return stored.filter((item): item is RewardBadgeTypeId => allowed.has(item as RewardBadgeTypeId));
-}
-
-function resolveEquipped(equipped: string | null | undefined, owned: Set<string>, fallback: string | null) {
-  if (equipped === COSMETIC_OFF) {
-    return null;
-  }
-  if (equipped && owned.has(equipped)) {
-    return equipped;
-  }
-  return fallback;
 }
 
 @Injectable()
@@ -391,7 +373,6 @@ export class RewardsService {
         avatarFrameId: resolveEquipped(
           look?.equippedAvatarFrameId ?? null,
           ownedFrameIds(badges, userUnlocks),
-          autoFrameId(badges),
         ),
       });
     }
@@ -425,12 +406,10 @@ export class RewardsService {
       avatarFrameId: resolveEquipped(
         equipped?.equippedAvatarFrameId,
         frames,
-        autoFrameId(badges),
       ),
       questionnaireAuraId: resolveEquipped(
         equipped?.equippedQuestionnaireAuraId,
         auras,
-        autoAuraId(badges),
       ),
       visibleBadges: resolveVisibleBadges(badges, parseStoredBadgeTypes(equipped?.visibleBadgeTypes)),
       ownedFrameIds: GRANTABLE_AVATAR_FRAME_IDS.filter((id) => frames.has(id)),

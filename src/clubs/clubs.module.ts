@@ -4,12 +4,11 @@ import { AuthModule } from '../auth/auth.module';
 import { ImageModule } from '../image/image.module';
 import { MediaModule } from '../media/media.module';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { RewardsModule } from '../rewards/rewards.module';
 import { ClubsController } from './clubs.controller';
 import { ClubsService } from './clubs.service';
 
 @Module({
-  imports: [AuthModule, MediaModule, ImageModule, NotificationsModule, RewardsModule],
+  imports: [AuthModule, MediaModule, ImageModule, NotificationsModule],
   controllers: [ClubsController],
   providers: [ClubsService],
   exports: [ClubsService],
