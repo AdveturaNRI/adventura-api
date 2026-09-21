@@ -2307,8 +2307,9 @@ export class ChatsService {
       };
     }
 
+    // Ring timed out or busy UI parked the invite — chat members may still late-join.
     if (!call.ringingUserIds.includes(userId)) {
-      throw new ForbiddenException('Вас не приглашали в этот звонок');
+      return this.joinVoiceCall(userId, conversationId, callId);
     }
 
     call.ringingUserIds = call.ringingUserIds.filter((id) => id !== userId);
