@@ -28,6 +28,9 @@ model User {
   roles           String[]         @default([])
   questionnaireStep Int            @default(0)
   lastSeenAt        DateTime?
+  equippedAvatarFrameId        String?
+  equippedQuestionnaireAuraId  String?
+  visibleBadgeTypes            Json?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   refreshTokens   RefreshToken[]
@@ -53,6 +56,55 @@ model User {
   gameApplications          GameApplication[]
   gamePlayers               GamePlayer[]
   pushSubscriptions         PushSubscription[]
+  rewards                   UserReward[]
+  cosmeticUnlocks           UserCosmeticUnlock[]
+}
+
+enum RewardBadgeType {
+  alpha_tester
+  bug_hunter
+  founding_dm
+  early_arrival
+  tavern_keeper
+}
+
+model UserReward {
+  id                  String          @id @default(cuid())
+  userId              String
+  badgeType           RewardBadgeType
+  customDiceSkinId    String?
+  bonusCharacterSlots Int             @default(0)
+  grantedAt           DateTime        @default(now())
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeType])
+  @@index([userId])
+  @@map("user_rewards")
+}
+
+/// Косметика, разблокированная отдельно от наград: покупка, админка, позже подписка.
+/// itemId = id рамки или "*" — все рамки этого kind.
+model UserCosmeticUnlock {
+  id        String   @id @default(cuid())
+  userId    String
+  kind      String
+  itemId    String
+  grantedAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, itemId])
+  @@index([userId])
+  @@map("user_cosmetic_unlocks")
+}
+
+model DailyUsageCounter {
+  userId String
+  kind   String
+  day    DateTime @db.Date
+  count  Int      @default(0)
+
+  @@id([userId, kind, day])
+  @@map("daily_usage_counters")
 }
 
 model Status {
@@ -360,6 +412,7 @@ enum ConversationType {
 
 enum ConversationParticipantRole {
   OWNER
+  ADMIN
   MEMBER
 }
 
@@ -425,6 +478,7 @@ enum MessageKind {
   USER_UNBLOCKED
   GAME_DELETED
   DICE_ROLL
+  MISSED_VOICE_CALL
 }
 
 model Message {

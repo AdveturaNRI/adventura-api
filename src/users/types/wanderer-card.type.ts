@@ -19,6 +19,9 @@ export type WandererCard = {
   experienceLabel: string | null;
   profileCard: ImageUrls | null;
   blockedByMe: boolean;
+  badges: Array<'alpha_tester' | 'bug_hunter' | 'founding_dm' | 'early_arrival' | 'tavern_keeper'>;
+  avatarFrameId: string | null;
+  questionnaireAuraId: string | null;
   /** Заполняется только в getWandererCard (просмотр анкеты напрямую). */
   isFavorite?: boolean;
 };

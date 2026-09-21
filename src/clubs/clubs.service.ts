@@ -12,6 +12,7 @@ import { ImageProcessorService } from '../image/image-processor.service';
 import { MediaService } from '../media/media.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { RewardsService } from '../rewards/rewards.service';
 import { ClubLinkDto, CreateClubDto, ClubScheduleDayDto } from './dto/create-club.dto';
 import { DeleteClubDto } from './dto/delete-club.dto';
 import { UpdateClubDto } from './dto/update-club.dto';
@@ -78,6 +79,7 @@ export class ClubsService {
     private readonly mediaService: MediaService,
     private readonly imageProcessor: ImageProcessorService,
     private readonly notificationsService: NotificationsService,
+    private readonly rewardsService: RewardsService,
     private readonly config: ConfigService,
   ) {}
 
@@ -181,6 +183,16 @@ export class ClubsService {
       });
       return club;
     });
+
+    try {
+      await this.rewardsService.grantReward(ownerId, 'tavern_keeper');
+    } catch (error) {
+      this.logger.warn(
+        `Не удалось выдать Хозяина таверны владельцу ${ownerId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
 
     return this.toListItem(created, ownerId, true);
   }

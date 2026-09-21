@@ -16,4 +16,8 @@ export class GenerateArtDto {
   @IsString()
   @MaxLength(200)
   model?: string;
+
+  @IsOptional()
+  @IsIn(['portrait', 'landscape', 'interior', 'item', 'token'])
+  entityId?: string;
 }

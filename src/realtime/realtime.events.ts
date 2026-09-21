@@ -6,6 +6,10 @@ export const REALTIME_EVENTS = {
   NOTIFICATION_NEW: 'notification:new',
   UNREAD_SYNC: 'unread:sync',
   PRESENCE_UPDATE: 'presence:update',
+  CALL_INVITE: 'call:invite',
+  CALL_ACCEPTED: 'call:accepted',
+  CALL_DECLINED: 'call:declined',
+  CALL_ENDED: 'call:ended',
 } as const;
 
 export type UnreadSyncPayload = {
@@ -27,4 +31,20 @@ export type ConversationReadPayload = {
 
 export type ConversationDeletedPayload = {
   conversationId: string;
+};
+
+export type CallInvitePayload = {
+  callId: string;
+  conversationId: string;
+  fromUserId: string;
+  fromNickname: string;
+  fromAvatarUrl: string | null;
+  conversationTitle: string | null;
+  isGroup: boolean;
+};
+
+export type CallSignalPayload = {
+  callId: string;
+  conversationId: string;
+  byUserId: string;
 };

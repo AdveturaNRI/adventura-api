@@ -5,6 +5,7 @@ import { ChatsModule } from '../chats/chats.module';
 import { ImageModule } from '../image/image.module';
 import { MediaModule } from '../media/media.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { RewardsModule } from '../rewards/rewards.module';
 import { UsersController } from './users.controller';
 import { UserGameSystemsService } from './user-game-systems.service';
 import { UsersService } from './users.service';
@@ -16,6 +17,7 @@ import { UsersService } from './users.service';
     ImageModule,
     NotificationsModule,
     forwardRef(() => ChatsModule),
+    RewardsModule,
   ],
   controllers: [UsersController],
   providers: [UsersService, UserGameSystemsService],
