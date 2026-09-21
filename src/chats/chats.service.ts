@@ -46,10 +46,10 @@ const MAX_MESSAGE_ATTACHMENTS = 10;
 const MEMBERS_PREVIEW_LIMIT = 3;
 /** Stop ringing callees; call stays open for late join. */
 const VOICE_CALL_RING_MS = 30_000;
-/** Solo caller may wait this long for someone to join. */
+/** Solo lobby wait — initial invite and after others leave. */
 const VOICE_CALL_WAIT_MS = 5 * 60_000;
-/** After others leave, last person in the room — don't keep a ghost call forever. */
-const VOICE_CALL_ABANDON_MS = 20_000;
+/** After others leave, last person keeps the room this long. */
+const VOICE_CALL_ABANDON_MS = VOICE_CALL_WAIT_MS;
 /** Safety prune for abandoned solo lobbies. */
 const VOICE_CALL_TTL_MS = VOICE_CALL_WAIT_MS + 30_000;
 
@@ -2443,26 +2443,7 @@ export class ChatsService {
       call.joinedUserIds = call.joinedUserIds.filter((id) => id !== userId);
     }
 
-    // Direct call: hangup ends the room for everyone.
-    if (!call.isGroup) {
-      const notify = uniqueIds(
-        [...call.joinedUserIds, ...call.ringingUserIds].filter((id) => id !== userId),
-      );
-      this.clearVoiceCallTimers(call);
-      this.activeVoiceCalls.delete(callId);
-      if (notify.length > 0) {
-        this.realtime.emitCallEnded(notify, signal);
-      }
-      if (aloneBeforeLeave) {
-        try {
-          await this.postMissedVoiceCallMessage(call.fromUserId, call.conversationId);
-        } catch {
-          // best-effort
-        }
-      }
-      return { ok: true as const };
-    }
-
+    // Room empty — end for everyone (direct and group).
     if (call.joinedUserIds.length === 0) {
       const ringingLeft = [...call.ringingUserIds];
       this.clearVoiceCallTimers(call);
@@ -2495,6 +2476,7 @@ export class ChatsService {
       this.clearVoiceCallRingTimer(call);
     }
 
+    // Someone left — remaining people keep the lobby (incl. 1:1 solo wait).
     if (call.joinedUserIds.length === 1) {
       this.clearVoiceCallWaitTimer(call);
       call.waitTimer = setTimeout(() => {
