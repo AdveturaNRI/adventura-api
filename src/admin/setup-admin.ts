@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'fs';
 import { join, resolve } from 'path';
 
 import type { INestApplication } from '@nestjs/common';
@@ -1664,27 +1664,50 @@ export async function setupAdmin(
     'GrantRewards',
   ] as const;
 
-  // Always initialize() — watch() is flaky under Docker (NODE_ENV=development in compose)
-  // and often finishes before rollup writes bundle.js → empty UserComponents.
-  await admin.initialize();
-
-  for (let attempt = 0; attempt < 25; attempt += 1) {
-    if (existsSync(rollupBundlePath) && existsSync(entryPath)) {
-      break;
+  // Drop stale entry/bundle from a previous component set (e.g. only GrantRewards).
+  for (const stale of [entryPath, rollupBundlePath, stableBundlePath]) {
+    try {
+      unlinkSync(stale);
+    } catch {
+      // first run
     }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+  }
+
+  // AdminJS: initialize() only bundles in production; watch() only in non-production.
+  // Docker/compose run NODE_ENV=production. Local `nest start --watch` is development.
+  if (process.env.NODE_ENV === 'production') {
+    await admin.initialize();
+  } else {
+    await admin.watch();
+  }
+
+  let entry = '';
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (existsSync(rollupBundlePath) && existsSync(entryPath)) {
+      entry = readFileSync(entryPath, 'utf8');
+      if (requiredComponentIds.every((id) => entry.includes(id))) {
+        break;
+      }
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
   }
 
   if (!existsSync(rollupBundlePath) || !existsSync(entryPath)) {
     throw new Error(
-      `AdminJS bundle missing after initialize (${entryPath}, ${rollupBundlePath})`,
+      `AdminJS bundle missing after ${
+        process.env.NODE_ENV === 'production' ? 'initialize' : 'watch'
+      } (${entryPath}, ${rollupBundlePath})`,
     );
   }
 
-  const entry = readFileSync(entryPath, 'utf8');
+  if (!entry) {
+    entry = readFileSync(entryPath, 'utf8');
+  }
   for (const id of requiredComponentIds) {
     if (!entry.includes(id)) {
-      throw new Error(`AdminJS entry.js missing component ${id}`);
+      throw new Error(
+        `AdminJS entry.js missing component ${id}. entry.js:\n${entry}`,
+      );
     }
   }
 
