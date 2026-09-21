@@ -2179,7 +2179,7 @@ export class ChatsService {
     });
 
     const roomName = `chat:${conversationId}`;
-    const avatarUrl = await this.getAvatarUrl(userId);
+    const avatarUrl = await this.getAvatarUrl(userId, 'display');
     const look =
       (await this.rewardsService.getLooksForUsers([userId])).get(userId) ?? {
         badges: [],
@@ -2248,7 +2248,7 @@ export class ChatsService {
       conversationId,
       fromUserId: userId,
       fromNickname: user.nickname,
-      fromAvatarUrl: await this.getAvatarUrl(userId),
+      fromAvatarUrl: await this.getAvatarUrl(userId, 'display'),
       conversationTitle,
       isGroup,
     };
@@ -2627,7 +2627,7 @@ export class ChatsService {
         return {
           userId: id,
           nickname: user?.nickname ?? id,
-          avatarUrl: await this.getAvatarUrl(id),
+          avatarUrl: await this.getAvatarUrl(id, 'display'),
         };
       }),
     );
@@ -3499,13 +3499,20 @@ export class ChatsService {
     };
   }
 
-  private async getAvatarUrl(userId: string): Promise<string | null> {
+  private async getAvatarUrl(
+    userId: string,
+    quality: 'list' | 'display' = 'list',
+  ): Promise<string | null> {
     const media = await this.mediaService.getCollection({
       entityType: 'User',
       entityId: userId,
       collection: 'avatar',
     });
     const urls = await this.mediaService.getCollectionUrls(media);
+    // Call tiles are ~96–128px (retina → 256): thumb(64) looks muddy.
+    if (quality === 'display') {
+      return urls.medium ?? urls.large ?? urls.small ?? urls.thumb ?? null;
+    }
     return urls.thumb ?? urls.small ?? urls.medium ?? urls.large ?? null;
   }
 }
