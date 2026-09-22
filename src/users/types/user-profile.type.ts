@@ -45,6 +45,32 @@ export type UserProfile = {
   effectiveNotificationSoundUrl: string | null;
   avatar: ImageUrls | null;
   profileCard: ImageUrls | null;
+  rewards: UserReward[];
+  perks: UnlockedPerks;
   createdAt: Date;
   updatedAt: Date;
+};
+
+export type UserReward = {
+  id: string;
+  userId: string;
+  badgeType: 'alpha_tester' | 'bug_hunter' | 'founding_dm' | 'early_arrival' | 'tavern_keeper';
+  customDiceSkinId: string | null;
+  bonusCharacterSlots: number;
+  grantedAt: Date;
+};
+
+export type UnlockedPerks = {
+  badges: UserReward['badgeType'][];
+  diceSkinIds: string[];
+  bonusCharacterSlots: number;
+  bonusPortraitGenerationsPerDay: number;
+  avatarFrameId: string | null;
+  questionnaireAuraId: string | null;
+  visibleBadges: UserReward['badgeType'][];
+  ownedFrameIds: string[];
+  ownedAuraIds: string[];
+  unlockAllAvatarFrames: boolean;
+  unlockAllAuras: boolean;
+  unlockAllDiceSkins: boolean;
 };

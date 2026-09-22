@@ -1,15 +1,21 @@
 import { Injectable } from '@nestjs/common';
 
+import { RewardsService } from '../rewards/rewards.service';
 import { ArtQueueService, type ArtTaskPublicView } from './art-queue.service';
 import type { GenerateArtDto } from './dto/generate-art.dto';
 import { buildKandinskyPrompt, kandinskyTypeFromEntity } from './kandinsky-prompt';
 
 @Injectable()
 export class ArtStudioService {
-  constructor(private readonly queue: ArtQueueService) {}
+  constructor(
+    private readonly queue: ArtQueueService,
+    private readonly rewardsService: RewardsService,
+  ) {}
 
-  enqueue(userId: string, dto: GenerateArtDto): ArtTaskPublicView {
-    // Клиент уже шлёт обогащённый промпт; на сервере лишь лёгкая страховка длины
+  async enqueue(userId: string, dto: GenerateArtDto): Promise<ArtTaskPublicView> {
+    if (dto.entityId === 'portrait') {
+      await this.rewardsService.consumePortraitGeneration(userId);
+    }
     const prompt = dto.prompt.trim().slice(0, 2000);
     return this.queue.enqueue({
       userId,

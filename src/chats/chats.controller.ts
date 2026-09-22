@@ -22,6 +22,11 @@ import { MAX_UPLOAD_FILE_SIZE_BYTES } from '../common/upload.constants';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { DeleteConversationQueryDto } from './dto/delete-conversation.dto';
 import { ForwardMessagesDto } from './dto/forward-messages.dto';
+import {
+  AddGroupMembersDto,
+  RenameGroupDto,
+  SetGroupMemberRoleDto,
+} from './dto/group-manage.dto';
 import { ListMessagesQueryDto } from './dto/list-messages.dto';
 import { ReorderPinnedChatsDto } from './dto/reorder-pinned-chats.dto';
 import { SendDiceRollDto } from './dto/send-dice-roll.dto';
@@ -76,6 +81,66 @@ export class ChatsController {
   @Get(':id/members')
   listMembers(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
     return this.chatsService.listMembers(user.id, conversationId);
+  }
+
+  @Put(':id')
+  renameGroup(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Body() dto: RenameGroupDto,
+  ) {
+    return this.chatsService.renameGroup(user.id, conversationId, dto.title);
+  }
+
+  @Post(':id/members')
+  addGroupMembers(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Body() dto: AddGroupMembersDto,
+  ) {
+    return this.chatsService.addGroupMembers(user.id, conversationId, dto.memberIds);
+  }
+
+  @Delete(':id/members/:userId')
+  removeGroupMember(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Param('userId') targetUserId: string,
+  ) {
+    return this.chatsService.removeGroupMember(user.id, conversationId, targetUserId);
+  }
+
+  @Put(':id/members/:userId/role')
+  setGroupMemberRole(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Param('userId') targetUserId: string,
+    @Body() dto: SetGroupMemberRoleDto,
+  ) {
+    return this.chatsService.setGroupMemberRole(
+      user.id,
+      conversationId,
+      targetUserId,
+      dto.role,
+    );
+  }
+
+  @Post(':id/transfer')
+  transferGroupOwnership(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Body() body: { userId?: string },
+  ) {
+    return this.chatsService.transferGroupOwnership(
+      user.id,
+      conversationId,
+      body.userId ?? '',
+    );
+  }
+
+  @Delete(':id/group')
+  deleteGroup(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+    return this.chatsService.deleteGroup(user.id, conversationId);
   }
 
   @Post(':id/leave')
@@ -155,6 +220,58 @@ export class ChatsController {
   @Post(':id/read')
   markRead(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
     return this.chatsService.markRead(user.id, conversationId);
+  }
+
+  /** LiveKit token for in-chat voice. Room is created on first join. */
+  @Post(':id/voice/token')
+  createVoiceToken(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+    return this.chatsService.createVoiceToken(user.id, conversationId);
+  }
+
+  @Post(':id/voice/invite')
+  inviteVoiceCall(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+    return this.chatsService.inviteVoiceCall(user.id, conversationId);
+  }
+
+  @Get(':id/voice/active')
+  getActiveVoiceCall(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+    return this.chatsService.getActiveVoiceCall(user.id, conversationId);
+  }
+
+  @Post(':id/voice/accept')
+  acceptVoiceCall(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Body() body: { callId?: string },
+  ) {
+    return this.chatsService.acceptVoiceCall(user.id, conversationId, body.callId ?? '');
+  }
+
+  @Post(':id/voice/join')
+  joinVoiceCall(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Body() body: { callId?: string },
+  ) {
+    return this.chatsService.joinVoiceCall(user.id, conversationId, body.callId);
+  }
+
+  @Post(':id/voice/decline')
+  declineVoiceCall(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Body() body: { callId?: string },
+  ) {
+    return this.chatsService.declineVoiceCall(user.id, conversationId, body.callId ?? '');
+  }
+
+  @Post(':id/voice/end')
+  endVoiceCall(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Body() body: { callId?: string },
+  ) {
+    return this.chatsService.endVoiceCall(user.id, conversationId, body.callId ?? '');
   }
 
   @Post(':id/block')

@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'fs';
 import { join, resolve } from 'path';
 
 import type { INestApplication } from '@nestjs/common';
@@ -18,12 +18,27 @@ import { BroadcastService } from '../notifications/broadcast.service';
 import { NotificationSoundsService } from '../notification-sounds/notification-sounds.service';
 import { PushSubscriptionsService } from '../push-subscriptions/push-subscriptions.service';
 import type { PrismaService } from '../prisma/prisma.service';
+import { RewardsService } from '../rewards/rewards.service';
 import {
   buildQuestionnaireCompletionInput,
   isEligibleForWanderersFeed,
 } from '../users/utils/questionnaire-completion.util';
 import { MarketingCampaignsService } from '../marketing/campaigns/marketing-campaigns.service';
 import { MarketingAnalyticsService } from '../marketing/analytics/marketing-analytics.service';
+import {
+  createGrantRewardsPageHandler,
+  handleGrantRewardRecordCreate,
+  handleUnlockCosmeticRecordCreate,
+  searchUsers,
+  toUserSearchRecords,
+} from './grant-rewards.handler';
+import { ADMIN_LOCALE_RU } from './locale-ru';
+import {
+  BADGE_SELECT_OPTIONS,
+  COSMETIC_ITEM_SELECT_OPTIONS,
+  COSMETIC_KIND_SELECT_OPTIONS,
+  DICE_SELECT_OPTIONS,
+} from './rewards-catalog';
 
 type ChartRange = 'day' | 'week' | 'month' | 'year' | 'all';
 type ChartBucket = 'hour' | 'day' | 'week' | 'month';
@@ -956,6 +971,13 @@ const readOnlyActions = {
   bulkDelete: { isAccessible: false },
 } as const;
 
+const hiddenOnEdit = {
+  list: true,
+  show: true,
+  edit: false,
+  filter: true,
+} as const;
+
 export async function setupAdmin(
   app: INestApplication,
   configService: ConfigService,
@@ -1048,6 +1070,10 @@ export async function setupAdmin(
     'MarketingAnalyticsAdmin',
     resolveAdminComponent('marketing-analytics-admin'),
   );
+  const GrantRewardsComponent = componentLoader.add(
+    'GrantRewards',
+    resolveAdminComponent('components/grant-rewards'),
+  );
 
   const analyticsNavigation = { name: 'Аналитика', icon: 'Activity' };
   const appSettings = app.get(AppSettingsService);
@@ -1057,6 +1083,7 @@ export async function setupAdmin(
   const marketingLandings = app.get(MarketingLandingsService);
   const marketingCampaigns = app.get(MarketingCampaignsService);
   const marketingAnalytics = app.get(MarketingAnalyticsService);
+  const rewards = app.get(RewardsService);
 
   const admin = new AdminJS({
     rootPath: '/admin',
@@ -1069,42 +1096,7 @@ export async function setupAdmin(
       language: 'ru',
       availableLanguages: ['ru', 'en'],
       translations: {
-        ru: {
-          labels: {
-            AnalyticsEvent: 'События',
-            AnalyticsDailyMetric: 'Суточные метрики',
-          },
-          pages: {
-            metrikaSettings: 'Яндекс Метрика',
-            notificationSounds: 'Звуки уведомлений',
-            broadcasts: 'Массовые оповещения',
-            pushSettings: 'Web Push / FCM',
-            marketingLandings: 'Маркетинг · Лендинги',
-            marketingCampaigns: 'Маркетинг · Кампании',
-            marketingAnalytics: 'Маркетинг · Аналитика',
-          },
-          resources: {
-            AnalyticsEvent: {
-              properties: {
-                name: 'Событие',
-                userId: 'Пользователь',
-                platform: 'Платформа',
-                appVersion: 'Версия',
-                occurredAt: 'Когда',
-                props: 'Свойства',
-                createdAt: 'Записано',
-              },
-            },
-            AnalyticsDailyMetric: {
-              properties: {
-                day: 'День',
-                metric: 'Метрика',
-                value: 'Значение',
-                updatedAt: 'Обновлено',
-              },
-            },
-          },
-        },
+        ru: ADMIN_LOCALE_RU,
       },
     },
     dashboard: {
@@ -1112,6 +1104,11 @@ export async function setupAdmin(
       handler: async () => buildAnalyticsDashboardData(prisma),
     },
     pages: {
+      grantRewards: {
+        icon: 'Gift',
+        component: GrantRewardsComponent,
+        handler: createGrantRewardsPageHandler(prisma, rewards),
+      },
       metrikaSettings: {
         icon: 'Settings',
         component: metrikaComponent,
@@ -1822,6 +1819,7 @@ export async function setupAdmin(
         resource: { model: getModelByName('User'), client: prisma },
         options: {
           navigation: { name: 'Пользователи', icon: 'User' },
+          titleProperty: 'nickname',
           listProperties: ['id', 'email', 'nickname', 'isGuest', 'location', 'createdAt'],
           properties: {
             passwordHash: {
@@ -1838,6 +1836,25 @@ export async function setupAdmin(
                 show: true,
                 edit: false,
                 filter: false,
+              },
+            },
+            visibleBadgeTypes: {
+              isVisible: {
+                list: false,
+                show: true,
+                edit: false,
+                filter: false,
+              },
+            },
+          },
+          actions: {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            search: {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              handler: async (request: any) => {
+                const query = String(request.params?.query ?? request.query?.query ?? '').trim();
+                const users = await searchUsers(prisma, query);
+                return { records: toUserSearchRecords(users) };
               },
             },
           },
@@ -1915,6 +1932,76 @@ export async function setupAdmin(
         },
       },
       {
+        resource: { model: getModelByName('UserReward'), client: prisma },
+        options: {
+          navigation: { name: 'Награды', icon: 'Award' },
+          listProperties: [
+            'id',
+            'user',
+            'badgeType',
+            'customDiceSkinId',
+            'bonusCharacterSlots',
+            'grantedAt',
+          ],
+          properties: {
+            badgeType: {
+              availableValues: BADGE_SELECT_OPTIONS,
+            },
+            customDiceSkinId: {
+              availableValues: DICE_SELECT_OPTIONS,
+              isVisible: hiddenOnEdit,
+            },
+            bonusCharacterSlots: {
+              isVisible: hiddenOnEdit,
+            },
+            grantedAt: {
+              isVisible: hiddenOnEdit,
+            },
+          },
+          actions: {
+            new: {
+              component: GrantRewardsComponent,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              handler: (request: any, _response: any, context: any) =>
+                handleGrantRewardRecordCreate(request, context, rewards),
+            },
+          },
+        },
+      },
+      {
+        resource: { model: getModelByName('UserCosmeticUnlock'), client: prisma },
+        options: {
+          navigation: { name: 'Награды', icon: 'Award' },
+          listProperties: ['id', 'user', 'kind', 'itemId', 'grantedAt'],
+          properties: {
+            kind: {
+              availableValues: COSMETIC_KIND_SELECT_OPTIONS,
+            },
+            itemId: {
+              availableValues: COSMETIC_ITEM_SELECT_OPTIONS,
+            },
+            grantedAt: {
+              isVisible: hiddenOnEdit,
+            },
+          },
+          actions: {
+            new: {
+              component: GrantRewardsComponent,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              handler: (request: any, _response: any, context: any) =>
+                handleUnlockCosmeticRecordCreate(request, context, rewards, prisma),
+            },
+          },
+        },
+      },
+      {
+        resource: { model: getModelByName('DailyUsageCounter'), client: prisma },
+        options: {
+          navigation: { name: 'Награды', icon: 'Award' },
+          listProperties: ['userId', 'kind', 'day', 'count'],
+        },
+      },
+      {
         resource: { model: getModelByName('Media'), client: prisma },
         options: {
           navigation: { name: 'Медиа', icon: 'Image' },
@@ -1948,29 +2035,53 @@ export async function setupAdmin(
     'MarketingLandingEditor',
     'MarketingCampaignsAdmin',
     'MarketingAnalyticsAdmin',
+    'GrantRewards',
   ] as const;
 
-  // Always initialize() — watch() is flaky under Docker (NODE_ENV=development in compose)
-  // and often finishes before rollup writes bundle.js → empty UserComponents.
-  await admin.initialize();
-
-  for (let attempt = 0; attempt < 25; attempt += 1) {
-    if (existsSync(rollupBundlePath) && existsSync(entryPath)) {
-      break;
+  // Drop stale entry/bundle from a previous component set (e.g. only GrantRewards).
+  for (const stale of [entryPath, rollupBundlePath, stableBundlePath]) {
+    try {
+      unlinkSync(stale);
+    } catch {
+      // first run
     }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+  }
+
+  // AdminJS: initialize() only bundles in production; watch() only in non-production.
+  // Docker/compose run NODE_ENV=production. Local `nest start --watch` is development.
+  if (process.env.NODE_ENV === 'production') {
+    await admin.initialize();
+  } else {
+    await admin.watch();
+  }
+
+  let entry = '';
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (existsSync(rollupBundlePath) && existsSync(entryPath)) {
+      entry = readFileSync(entryPath, 'utf8');
+      if (requiredComponentIds.every((id) => entry.includes(id))) {
+        break;
+      }
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
   }
 
   if (!existsSync(rollupBundlePath) || !existsSync(entryPath)) {
     throw new Error(
-      `AdminJS bundle missing after initialize (${entryPath}, ${rollupBundlePath})`,
+      `AdminJS bundle missing after ${
+        process.env.NODE_ENV === 'production' ? 'initialize' : 'watch'
+      } (${entryPath}, ${rollupBundlePath})`,
     );
   }
 
-  const entry = readFileSync(entryPath, 'utf8');
+  if (!entry) {
+    entry = readFileSync(entryPath, 'utf8');
+  }
   for (const id of requiredComponentIds) {
     if (!entry.includes(id)) {
-      throw new Error(`AdminJS entry.js missing component ${id}`);
+      throw new Error(
+        `AdminJS entry.js missing component ${id}. entry.js:\n${entry}`,
+      );
     }
   }
 

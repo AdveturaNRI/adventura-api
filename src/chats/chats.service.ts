@@ -3,7 +3,9 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   ConversationParticipantRole,
   ConversationType,
@@ -12,6 +14,8 @@ import {
   Prisma,
   type Conversation,
 } from '@prisma/client';
+import { randomUUID } from 'crypto';
+import { AccessToken } from 'livekit-server-sdk';
 
 import { ImageProcessorService } from '../image/image-processor.service';
 import type { ImageUrls } from '../image/image.types';
@@ -21,6 +25,8 @@ import { MediaService } from '../media/media.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PushSubscriptionsService } from '../push-subscriptions/push-subscriptions.service';
 import { RealtimeEmitter } from '../realtime/realtime.emitter';
+import type { CallInvitePayload } from '../realtime/realtime.events';
+import { RewardsService } from '../rewards/rewards.service';
 import {
   diceRollPreviewText,
   buildDicePayloadFromClient,
@@ -38,6 +44,32 @@ const MESSAGE_IMAGE_VARIANTS = ['thumb', 'medium', 'large', 'original'] as const
 const CHAT_BACKGROUND_IMAGE_VARIANTS = ['medium', 'large', 'original'] as const;
 const MAX_MESSAGE_ATTACHMENTS = 10;
 const MEMBERS_PREVIEW_LIMIT = 3;
+/** Stop ringing callees; call stays open for late join. */
+const VOICE_CALL_RING_MS = 30_000;
+/** Solo lobby wait — initial invite and after others leave. */
+const VOICE_CALL_WAIT_MS = 5 * 60_000;
+/** After others leave, last person keeps the room this long. */
+const VOICE_CALL_ABANDON_MS = VOICE_CALL_WAIT_MS;
+/** Safety prune for abandoned solo lobbies. */
+const VOICE_CALL_TTL_MS = VOICE_CALL_WAIT_MS + 30_000;
+
+type ActiveVoiceCall = {
+  callId: string;
+  conversationId: string;
+  fromUserId: string;
+  fromNickname: string;
+  fromAvatarUrl: string | null;
+  conversationTitle: string | null;
+  isGroup: boolean;
+  /** Still ringing — can accept / decline / join. */
+  ringingUserIds: string[];
+  /** Already in the LiveKit room (caller starts here). */
+  joinedUserIds: string[];
+  createdAt: number;
+  ringTimer?: ReturnType<typeof setTimeout>;
+  /** Ends the lobby if nobody else joined. */
+  waitTimer?: ReturnType<typeof setTimeout>;
+};
 
 function toConversationBackgroundBase(row: {
   backgroundKind: string | null;
@@ -63,15 +95,19 @@ export type ChatPeer = {
   avatarUrl: string | null;
   online: boolean;
   lastSeenAt: string | null;
+  badges: Array<'alpha_tester' | 'bug_hunter' | 'founding_dm' | 'early_arrival' | 'tavern_keeper'>;
+  avatarFrameId: string | null;
 };
 
 export type ChatMember = {
   id: string;
   nickname: string;
   avatarUrl: string | null;
-  role: 'owner' | 'member';
+  role: 'owner' | 'admin' | 'member';
   online: boolean;
   lastSeenAt: string | null;
+  badges: Array<'alpha_tester' | 'bug_hunter' | 'founding_dm' | 'early_arrival' | 'tavern_keeper'>;
+  avatarFrameId: string | null;
 };
 
 export type ChatAttachmentDto = {
@@ -91,12 +127,15 @@ export type ChatMessageKind =
   | 'user_blocked'
   | 'user_unblocked'
   | 'game_deleted'
-  | 'dice_roll';
+  | 'dice_roll'
+  | 'missed_voice_call';
 
 export type ChatMessageSender = {
   id: string;
   nickname: string;
   avatarUrl: string | null;
+  badges: Array<'alpha_tester' | 'bug_hunter' | 'founding_dm' | 'early_arrival' | 'tavern_keeper'>;
+  avatarFrameId: string | null;
 };
 
 export type ChatMessageDto = {
@@ -138,6 +177,7 @@ export type ConversationListItem = {
   memberCount: number;
   membersPreview: ChatPeer[];
   peerLastReadAt: string | null;
+  myRole?: 'owner' | 'admin' | 'member' | null;
   lastMessage: {
     id: string;
     body: string | null;
@@ -159,6 +199,18 @@ export type ConversationListItem = {
   updatedAt: string;
 };
 
+function toChatMemberRole(
+  role: ConversationParticipantRole,
+): 'owner' | 'admin' | 'member' {
+  if (role === ConversationParticipantRole.OWNER) {
+    return 'owner';
+  }
+  if (role === ConversationParticipantRole.ADMIN) {
+    return 'admin';
+  }
+  return 'member';
+}
+
 function toChatMessageKind(kind: MessageKind | undefined): ChatMessageKind {
   if (kind === MessageKind.FAVORITE_RECEIVED) {
     return 'favorite_received';
@@ -177,6 +229,9 @@ function toChatMessageKind(kind: MessageKind | undefined): ChatMessageKind {
   }
   if (kind === MessageKind.DICE_ROLL) {
     return 'dice_roll';
+  }
+  if (kind === MessageKind.MISSED_VOICE_CALL) {
+    return 'missed_voice_call';
   }
   return 'user';
 }
@@ -248,12 +303,16 @@ function uniqueIds(ids: string[]) {
 
 @Injectable()
 export class ChatsService {
+  private readonly activeVoiceCalls = new Map<string, ActiveVoiceCall>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly mediaService: MediaService,
     private readonly imageProcessor: ImageProcessorService,
     private readonly realtime: RealtimeEmitter,
     private readonly pushSubscriptions: PushSubscriptionsService,
+    private readonly config: ConfigService,
+    private readonly rewardsService: RewardsService,
     private readonly analytics: AnalyticsService,
   ) {}
 
@@ -468,16 +527,294 @@ export class ChatsService {
       orderBy: [{ role: 'asc' }, { joinedAt: 'asc' }],
     });
 
-    return Promise.all(
-      participants.map(async (participant) => ({
-        id: participant.user.id,
-        nickname: participant.user.nickname,
-        avatarUrl: await this.getAvatarUrl(participant.user.id),
-        role: participant.role === ConversationParticipantRole.OWNER ? 'owner' : 'member',
-        online: this.realtime.isOnline(participant.user.id),
-        lastSeenAt: participant.user.lastSeenAt?.toISOString() ?? null,
-      })),
+    const looks = await this.rewardsService.getLooksForUsers(
+      participants.map((participant) => participant.user.id),
     );
+
+    return Promise.all(
+      participants.map(async (participant) => {
+        const look = looks.get(participant.user.id) ?? { badges: [], avatarFrameId: null };
+        return {
+          id: participant.user.id,
+          nickname: participant.user.nickname,
+          avatarUrl: await this.getAvatarUrl(participant.user.id),
+          role: toChatMemberRole(participant.role),
+          online: this.realtime.isPresent(participant.user.id, participant.user.lastSeenAt),
+          lastSeenAt: participant.user.lastSeenAt?.toISOString() ?? null,
+          badges: look.badges,
+          avatarFrameId: look.avatarFrameId,
+        };
+      }),
+    );
+  }
+
+  async renameGroup(userId: string, conversationId: string, title: string) {
+    const trimmed = title.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Укажите название группы');
+    }
+    const { conversation } = await this.requireUserGroupStaff(userId, conversationId);
+    if (conversation.gameId) {
+      throw new BadRequestException('Название чата игры меняется вместе с игрой');
+    }
+
+    await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: { title: trimmed },
+    });
+
+    return this.emitGroupSummaries(conversationId);
+  }
+
+  async addGroupMembers(userId: string, conversationId: string, memberIds: string[]) {
+    await this.requireUserGroupStaff(userId, conversationId);
+
+    const otherIds = uniqueIds(memberIds.filter((id) => id && id !== userId));
+    if (otherIds.length === 0) {
+      throw new BadRequestException('Добавьте хотя бы одного участника');
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: otherIds } },
+      select: { id: true },
+    });
+    if (users.length !== otherIds.length) {
+      throw new NotFoundException('Один или несколько пользователей не найдены');
+    }
+
+    const existing = await this.prisma.conversationParticipant.findMany({
+      where: { conversationId, userId: { in: otherIds } },
+      select: { userId: true },
+    });
+    const existingIds = new Set(existing.map((row) => row.userId));
+    const toAdd = otherIds.filter((id) => !existingIds.has(id));
+    if (toAdd.length === 0) {
+      return this.listMembers(userId, conversationId);
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.conversationParticipant.createMany({
+        data: toAdd.map((id) => ({
+          conversationId,
+          userId: id,
+          role: ConversationParticipantRole.MEMBER,
+        })),
+        skipDuplicates: true,
+      }),
+      ...toAdd.map((id) =>
+        this.prisma.conversationRead.upsert({
+          where: {
+            conversationId_userId: { conversationId, userId: id },
+          },
+          create: {
+            conversationId,
+            userId: id,
+            lastReadAt: new Date(0),
+            hiddenAt: null,
+          },
+          update: { hiddenAt: null },
+        }),
+      ),
+    ]);
+
+    await this.emitGroupSummaries(conversationId);
+    return this.listMembers(userId, conversationId);
+  }
+
+  async removeGroupMember(actorId: string, conversationId: string, targetUserId: string) {
+    const { membership: actor } = await this.requireUserGroupStaff(actorId, conversationId);
+    if (targetUserId === actorId) {
+      throw new BadRequestException('Чтобы выйти из группы, используйте «Выйти»');
+    }
+
+    const target = await this.prisma.conversationParticipant.findUnique({
+      where: {
+        conversationId_userId: { conversationId, userId: targetUserId },
+      },
+    });
+    if (!target) {
+      throw new NotFoundException('Участник не найден');
+    }
+
+    if (target.role === ConversationParticipantRole.OWNER) {
+      throw new ForbiddenException('Нельзя исключить создателя группы');
+    }
+    if (
+      actor.role === ConversationParticipantRole.ADMIN &&
+      target.role !== ConversationParticipantRole.MEMBER
+    ) {
+      throw new ForbiddenException('Администратор может исключать только обычных участников');
+    }
+
+    await this.prisma.conversationParticipant.delete({
+      where: {
+        conversationId_userId: { conversationId, userId: targetUserId },
+      },
+    });
+
+    this.realtime.emitConversationDeleted([targetUserId], { conversationId });
+    this.realtime.emitUnreadSync(targetUserId, {
+      chats: await this.countUnreadChats(targetUserId),
+      notifications: await this.countUnreadNotifications(targetUserId),
+    });
+
+    await this.emitGroupSummaries(conversationId);
+    return this.listMembers(actorId, conversationId);
+  }
+
+  async setGroupMemberRole(
+    actorId: string,
+    conversationId: string,
+    targetUserId: string,
+    role: 'admin' | 'member',
+  ) {
+    await this.requireUserGroupOwner(actorId, conversationId);
+    if (targetUserId === actorId) {
+      throw new BadRequestException('Нельзя изменить свою роль таким способом');
+    }
+
+    const target = await this.prisma.conversationParticipant.findUnique({
+      where: {
+        conversationId_userId: { conversationId, userId: targetUserId },
+      },
+    });
+    if (!target) {
+      throw new NotFoundException('Участник не найден');
+    }
+    if (target.role === ConversationParticipantRole.OWNER) {
+      throw new ForbiddenException('Роль создателя меняется только передачей прав');
+    }
+
+    const nextRole =
+      role === 'admin'
+        ? ConversationParticipantRole.ADMIN
+        : ConversationParticipantRole.MEMBER;
+
+    await this.prisma.conversationParticipant.update({
+      where: {
+        conversationId_userId: { conversationId, userId: targetUserId },
+      },
+      data: { role: nextRole },
+    });
+
+    await this.emitGroupSummaries(conversationId);
+    return this.listMembers(actorId, conversationId);
+  }
+
+  async transferGroupOwnership(
+    actorId: string,
+    conversationId: string,
+    targetUserId: string,
+  ) {
+    const trimmedTarget = targetUserId.trim();
+    if (!trimmedTarget) {
+      throw new BadRequestException('Укажите участника');
+    }
+    await this.requireUserGroupOwner(actorId, conversationId);
+    if (trimmedTarget === actorId) {
+      throw new BadRequestException('Вы уже создатель группы');
+    }
+
+    const target = await this.prisma.conversationParticipant.findUnique({
+      where: {
+        conversationId_userId: { conversationId, userId: trimmedTarget },
+      },
+    });
+    if (!target) {
+      throw new NotFoundException('Участник не найден');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.conversationParticipant.update({
+        where: {
+          conversationId_userId: { conversationId, userId: trimmedTarget },
+        },
+        data: { role: ConversationParticipantRole.OWNER },
+      }),
+      this.prisma.conversationParticipant.update({
+        where: {
+          conversationId_userId: { conversationId, userId: actorId },
+        },
+        data: { role: ConversationParticipantRole.ADMIN },
+      }),
+    ]);
+
+    await this.emitGroupSummaries(conversationId);
+    return this.listMembers(actorId, conversationId);
+  }
+
+  async deleteGroup(userId: string, conversationId: string) {
+    const { conversation } = await this.requireUserGroupOwner(userId, conversationId);
+    if (conversation.gameId) {
+      throw new BadRequestException('Чат игры удаляется вместе с игрой');
+    }
+
+    const participantIds = await this.getParticipantIds(conversationId);
+    await this.deleteConversationMedia(conversationId);
+    await this.prisma.conversation.delete({ where: { id: conversationId } });
+
+    for (const id of participantIds) {
+      this.realtime.emitConversationDeleted([id], { conversationId });
+      this.realtime.emitUnreadSync(id, {
+        chats: await this.countUnreadChats(id),
+        notifications: await this.countUnreadNotifications(id),
+      });
+    }
+
+    return { ok: true as const };
+  }
+
+  private async emitGroupSummaries(conversationId: string) {
+    const participantIds = await this.getParticipantIds(conversationId);
+    const summaries = await Promise.all(
+      participantIds.map((id) => this.getConversationSummary(id, conversationId)),
+    );
+    for (let i = 0; i < participantIds.length; i += 1) {
+      this.realtime.emitConversationUpdated([participantIds[i]], summaries[i]);
+    }
+    return summaries[0] ?? null;
+  }
+
+  private async requireUserGroupStaff(userId: string, conversationId: string) {
+    const conversation = await this.assertParticipant(userId, conversationId);
+    if (conversation.type !== ConversationType.GROUP) {
+      throw new BadRequestException('Это не групповой чат');
+    }
+    if (conversation.gameId) {
+      throw new BadRequestException('Состав чата игры меняется через игру');
+    }
+    const membership = await this.prisma.conversationParticipant.findUnique({
+      where: {
+        conversationId_userId: { conversationId, userId },
+      },
+    });
+    if (
+      !membership ||
+      (membership.role !== ConversationParticipantRole.OWNER &&
+        membership.role !== ConversationParticipantRole.ADMIN)
+    ) {
+      throw new ForbiddenException('Нужны права администратора');
+    }
+    return { conversation, membership };
+  }
+
+  private async requireUserGroupOwner(userId: string, conversationId: string) {
+    const conversation = await this.assertParticipant(userId, conversationId);
+    if (conversation.type !== ConversationType.GROUP) {
+      throw new BadRequestException('Это не групповой чат');
+    }
+    if (conversation.gameId) {
+      throw new BadRequestException('Состав чата игры меняется через игру');
+    }
+    const membership = await this.prisma.conversationParticipant.findUnique({
+      where: {
+        conversationId_userId: { conversationId, userId },
+      },
+    });
+    if (!membership || membership.role !== ConversationParticipantRole.OWNER) {
+      throw new ForbiddenException('Только создатель группы');
+    }
+    return { conversation, membership };
   }
 
   async leaveGroup(userId: string, conversationId: string) {
@@ -507,8 +844,35 @@ export class ChatsService {
 
     const remaining = await this.prisma.conversationParticipant.findMany({
       where: { conversationId, userId: { not: userId } },
-      select: { userId: true },
+      select: { userId: true, role: true, joinedAt: true },
+      orderBy: [{ role: 'asc' }, { joinedAt: 'asc' }],
     });
+
+    const leaving = await this.prisma.conversationParticipant.findUnique({
+      where: {
+        conversationId_userId: { conversationId, userId },
+      },
+      select: { role: true },
+    });
+
+    // If the owner leaves, hand ownership to the next admin (or earliest member).
+    if (
+      leaving?.role === ConversationParticipantRole.OWNER &&
+      remaining.length > 0
+    ) {
+      const nextOwner =
+        remaining.find((row) => row.role === ConversationParticipantRole.ADMIN) ??
+        remaining[0];
+      await this.prisma.conversationParticipant.update({
+        where: {
+          conversationId_userId: {
+            conversationId,
+            userId: nextOwner.userId,
+          },
+        },
+        data: { role: ConversationParticipantRole.OWNER },
+      });
+    }
 
     await this.prisma.conversationParticipant.delete({
       where: {
@@ -1116,6 +1480,7 @@ export class ChatsService {
           .filter((p) => p.userId !== userId)
           .slice(0, MEMBERS_PREVIEW_LIMIT)
           .map((p) => p.user);
+        const myParticipant = conversation.participants.find((p) => p.userId === userId);
         items.push({
           id: conversation.id,
           type: 'group',
@@ -1125,6 +1490,7 @@ export class ChatsService {
           memberCount: conversation.participants.length,
           membersPreview: await Promise.all(previewUsers.map((user) => this.toPeerDto(user))),
           peerLastReadAt: null,
+          myRole: myParticipant ? toChatMemberRole(myParticipant.role) : null,
           lastMessage,
           unread,
           isFavorite: false,
@@ -1482,14 +1848,21 @@ export class ChatsService {
               modifier,
               dto.color,
               mode,
+              dto.skin,
             );
             if (typeof built === 'string') {
               throw new BadRequestException(built);
             }
             return built;
           })()
-        : rollDiceServerSide(dto.dice, modifier, dto.color, mode);
+        : rollDiceServerSide(dto.dice, modifier, dto.color, mode, dto.skin);
     payload.hidden = Boolean(dto.hidden);
+    const ownedSkin = await this.rewardsService.resolveOwnedDiceSkin(userId, dto.skin);
+    if (ownedSkin) {
+      payload.skin = ownedSkin;
+    } else {
+      delete payload.skin;
+    }
 
     const message = await this.prisma.message.create({
       data: {
@@ -1799,6 +2172,551 @@ export class ChatsService {
     return { ok: true as const };
   }
 
+  /** Join token for LiveKit voice room keyed by conversation id. */
+  async createVoiceToken(userId: string, conversationId: string) {
+    await this.assertParticipant(userId, conversationId);
+
+    const url = this.config.get<string>('LIVEKIT_URL')?.trim();
+    const apiKey = this.config.get<string>('LIVEKIT_API_KEY')?.trim();
+    const apiSecret = this.config.get<string>('LIVEKIT_API_SECRET')?.trim();
+
+    if (!url || !apiKey || !apiSecret) {
+      throw new ServiceUnavailableException('Голосовой чат пока не настроен');
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { nickname: true },
+    });
+
+    const roomName = `chat:${conversationId}`;
+    const avatarUrl = await this.getAvatarUrl(userId, 'display');
+    const look =
+      (await this.rewardsService.getLooksForUsers([userId])).get(userId) ?? {
+        badges: [],
+        avatarFrameId: null,
+      };
+    const token = new AccessToken(apiKey, apiSecret, {
+      identity: userId,
+      name: user?.nickname ?? userId,
+      metadata: JSON.stringify({
+        avatarUrl,
+        badges: look.badges,
+        avatarFrameId: look.avatarFrameId,
+      }),
+      ttl: '2h',
+    });
+    token.addGrant({
+      roomJoin: true,
+      room: roomName,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true,
+    });
+
+    return {
+      url,
+      token: await token.toJwt(),
+      roomName,
+    };
+  }
+
+  async inviteVoiceCall(userId: string, conversationId: string) {
+    await this.assertParticipant(userId, conversationId);
+    this.pruneExpiredVoiceCalls();
+
+    if (this.findActiveCallForConversation(conversationId)) {
+      throw new BadRequestException('В этом чате уже идёт звонок');
+    }
+
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { type: true, title: true },
+    });
+    if (!conversation) {
+      throw new NotFoundException('Чат не найден');
+    }
+
+    const participantIds = await this.getParticipantIds(conversationId);
+    const targets = participantIds.filter((id) => id !== userId);
+    if (targets.length === 0) {
+      throw new BadRequestException('Некому звонить');
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { nickname: true },
+    });
+    if (!user) {
+      throw new NotFoundException('Пользователь не найден');
+    }
+
+    const isGroup = conversation.type === ConversationType.GROUP;
+    const conversationTitle = conversation.title?.trim() || null;
+    const callId = randomUUID();
+    const payload: CallInvitePayload = {
+      callId,
+      conversationId,
+      fromUserId: userId,
+      fromNickname: user.nickname,
+      fromAvatarUrl: await this.getAvatarUrl(userId, 'display'),
+      conversationTitle,
+      isGroup,
+    };
+
+    const call: ActiveVoiceCall = {
+      ...payload,
+      ringingUserIds: targets,
+      joinedUserIds: [userId],
+      createdAt: Date.now(),
+    };
+    call.ringTimer = setTimeout(() => {
+      void this.stopVoiceCallRinging(callId);
+    }, VOICE_CALL_RING_MS);
+    call.waitTimer = setTimeout(() => {
+      void this.expireSoloVoiceCall(callId);
+    }, VOICE_CALL_WAIT_MS);
+
+    this.activeVoiceCalls.set(callId, call);
+    this.realtime.emitCallInvite(targets, payload);
+
+    const ringing = await this.toVoiceCallPeers(targets);
+    return { callId, conversationId, isGroup, ringing };
+  }
+
+  async getActiveVoiceCall(userId: string, conversationId: string) {
+    await this.assertParticipant(userId, conversationId);
+    this.pruneExpiredVoiceCalls();
+    const call = this.findActiveCallForConversation(conversationId);
+    if (!call) {
+      return null;
+    }
+    const isJoined = call.joinedUserIds.includes(userId);
+    return {
+      callId: call.callId,
+      conversationId: call.conversationId,
+      fromUserId: call.fromUserId,
+      fromNickname: call.fromNickname,
+      fromAvatarUrl: call.fromAvatarUrl,
+      conversationTitle: call.conversationTitle,
+      isGroup: call.isGroup,
+      joinedCount: call.joinedUserIds.length,
+      canJoin: !isJoined,
+      isJoined,
+    };
+  }
+
+  async acceptVoiceCall(userId: string, conversationId: string, callId: string) {
+    await this.assertParticipant(userId, conversationId);
+    const call = this.requireVoiceCall(callId, conversationId);
+
+    if (call.joinedUserIds.includes(userId)) {
+      return {
+        callId: call.callId,
+        conversationId: call.conversationId,
+        byUserId: userId,
+      };
+    }
+
+    // Ring timed out or busy UI parked the invite — chat members may still late-join.
+    if (!call.ringingUserIds.includes(userId)) {
+      return this.joinVoiceCall(userId, conversationId, callId);
+    }
+
+    call.ringingUserIds = call.ringingUserIds.filter((id) => id !== userId);
+    call.joinedUserIds.push(userId);
+    if (call.ringingUserIds.length === 0) {
+      this.clearVoiceCallRingTimer(call);
+    }
+    if (call.joinedUserIds.length > 1) {
+      this.clearVoiceCallWaitTimer(call);
+    }
+
+    const signal = {
+      callId: call.callId,
+      conversationId: call.conversationId,
+      byUserId: userId,
+    };
+
+    const notify = uniqueIds(
+      [...call.joinedUserIds, ...call.ringingUserIds].filter((id) => id !== userId),
+    );
+    if (notify.length > 0) {
+      this.realtime.emitCallAccepted(notify, signal);
+    }
+
+    return signal;
+  }
+
+  /** Late join into an already-active group/direct call. */
+  async joinVoiceCall(userId: string, conversationId: string, callId?: string) {
+    await this.assertParticipant(userId, conversationId);
+    this.pruneExpiredVoiceCalls();
+
+    const call = callId?.trim()
+      ? this.requireVoiceCall(callId.trim(), conversationId)
+      : this.findActiveCallForConversation(conversationId);
+    if (!call) {
+      throw new NotFoundException('Звонок уже завершён');
+    }
+
+    if (call.joinedUserIds.includes(userId)) {
+      return {
+        callId: call.callId,
+        conversationId: call.conversationId,
+        byUserId: userId,
+      };
+    }
+
+    call.ringingUserIds = call.ringingUserIds.filter((id) => id !== userId);
+    call.joinedUserIds.push(userId);
+    if (call.ringingUserIds.length === 0) {
+      this.clearVoiceCallRingTimer(call);
+    }
+    if (call.joinedUserIds.length > 1) {
+      this.clearVoiceCallWaitTimer(call);
+    }
+
+    const signal = {
+      callId: call.callId,
+      conversationId: call.conversationId,
+      byUserId: userId,
+    };
+    const notify = uniqueIds(
+      [...call.joinedUserIds, ...call.ringingUserIds].filter((id) => id !== userId),
+    );
+    if (notify.length > 0) {
+      this.realtime.emitCallAccepted(notify, signal);
+    }
+
+    return signal;
+  }
+
+  async declineVoiceCall(userId: string, conversationId: string, callId: string) {
+    await this.assertParticipant(userId, conversationId);
+    const call = this.requireVoiceCall(callId, conversationId);
+    if (!call.ringingUserIds.includes(userId)) {
+      // Already joined or already left ringing — soft ok.
+      return { ok: true as const };
+    }
+
+    call.ringingUserIds = call.ringingUserIds.filter((id) => id !== userId);
+
+    const signal = {
+      callId: call.callId,
+      conversationId: call.conversationId,
+      byUserId: userId,
+    };
+
+    const notifyDeclined = uniqueIds(
+      call.joinedUserIds.filter((id) => id !== userId),
+    );
+    if (notifyDeclined.length > 0) {
+      this.realtime.emitCallDeclined(notifyDeclined, signal);
+    }
+
+    // Soft decline: others keep ringing / talking. Solo caller keeps waiting up to WAIT_MS.
+    if (call.ringingUserIds.length === 0) {
+      this.clearVoiceCallRingTimer(call);
+    }
+
+    return { ok: true as const };
+  }
+
+  /** Leave the call. Ends for everyone when the room is empty. */
+  async endVoiceCall(userId: string, conversationId: string, callId: string) {
+    await this.assertParticipant(userId, conversationId);
+    const call = this.activeVoiceCalls.get(callId);
+    if (!call || call.conversationId !== conversationId) {
+      return { ok: true as const };
+    }
+
+    const inJoined = call.joinedUserIds.includes(userId);
+    const inRinging = call.ringingUserIds.includes(userId);
+    if (!inJoined && !inRinging) {
+      return { ok: true as const };
+    }
+
+    // Solo cancel: caller (or last lobby occupant) leaves before anyone else joins.
+    const aloneBeforeLeave =
+      inJoined && call.joinedUserIds.length === 1 && call.joinedUserIds[0] === userId;
+
+    const signal = {
+      callId: call.callId,
+      conversationId: call.conversationId,
+      byUserId: userId,
+    };
+
+    if (inRinging) {
+      call.ringingUserIds = call.ringingUserIds.filter((id) => id !== userId);
+    }
+    if (inJoined) {
+      call.joinedUserIds = call.joinedUserIds.filter((id) => id !== userId);
+    }
+
+    // Room empty — end for everyone (direct and group).
+    if (call.joinedUserIds.length === 0) {
+      const ringingLeft = [...call.ringingUserIds];
+      this.clearVoiceCallTimers(call);
+      this.activeVoiceCalls.delete(callId);
+      // Notify whole chat so join banners clear, not only ringing callees.
+      let notify = ringingLeft;
+      try {
+        const participants = await this.getParticipantIds(conversationId);
+        notify = uniqueIds([...ringingLeft, ...participants]);
+      } catch {
+        // fall back to ringing only
+      }
+      if (notify.length > 0) {
+        this.realtime.emitCallEnded(
+          notify.filter((id) => id !== userId),
+          signal,
+        );
+      }
+      if (aloneBeforeLeave) {
+        try {
+          await this.postMissedVoiceCallMessage(call.fromUserId, call.conversationId);
+        } catch {
+          // best-effort
+        }
+      }
+      return { ok: true as const };
+    }
+
+    if (call.ringingUserIds.length === 0) {
+      this.clearVoiceCallRingTimer(call);
+    }
+
+    // Someone left — remaining people keep the lobby (incl. 1:1 solo wait).
+    if (call.joinedUserIds.length === 1) {
+      this.clearVoiceCallWaitTimer(call);
+      call.waitTimer = setTimeout(() => {
+        void this.expireAbandonedVoiceCall(callId);
+      }, VOICE_CALL_ABANDON_MS);
+    }
+
+    return { ok: true as const };
+  }
+
+  /** Ring phase over: dismiss callee UI, keep lobby open for late join. */
+  private async stopVoiceCallRinging(callId: string) {
+    const call = this.activeVoiceCalls.get(callId);
+    if (!call || call.ringingUserIds.length === 0) {
+      return;
+    }
+
+    const stillRinging = [...call.ringingUserIds];
+    call.ringingUserIds = [];
+    this.clearVoiceCallRingTimer(call);
+
+    const signal = {
+      callId: call.callId,
+      conversationId: call.conversationId,
+      byUserId: call.fromUserId,
+    };
+    this.realtime.emitCallEnded(stillRinging, signal);
+
+    // Drop waiting tiles for people still in the room (usually the caller).
+    for (const timedOutId of stillRinging) {
+      this.realtime.emitCallDeclined(call.joinedUserIds, {
+        callId: call.callId,
+        conversationId: call.conversationId,
+        byUserId: timedOutId,
+      });
+    }
+  }
+
+  /** Solo lobby timed out — nobody else joined. */
+  private async expireSoloVoiceCall(callId: string) {
+    const call = this.activeVoiceCalls.get(callId);
+    if (!call) {
+      return;
+    }
+
+    this.clearVoiceCallWaitTimer(call);
+
+    // Someone joined — leave the call alone.
+    if (call.joinedUserIds.length > 1) {
+      return;
+    }
+
+    const stillRinging = [...call.ringingUserIds];
+    call.ringingUserIds = [];
+    this.clearVoiceCallRingTimer(call);
+    this.activeVoiceCalls.delete(callId);
+
+    const signal = {
+      callId: call.callId,
+      conversationId: call.conversationId,
+      byUserId: call.fromUserId,
+    };
+    const notify = uniqueIds([...call.joinedUserIds, ...stillRinging]);
+    if (notify.length > 0) {
+      this.realtime.emitCallEnded(notify, signal);
+    }
+
+    try {
+      await this.postMissedVoiceCallMessage(call.fromUserId, call.conversationId);
+    } catch {
+      // best-effort
+    }
+  }
+
+  /** Last person ghosted after others left — close the room, no missed-call message. */
+  private async expireAbandonedVoiceCall(callId: string) {
+    const call = this.activeVoiceCalls.get(callId);
+    if (!call || call.joinedUserIds.length > 1) {
+      return;
+    }
+
+    const notify = uniqueIds([...call.joinedUserIds, ...call.ringingUserIds]);
+    this.clearVoiceCallTimers(call);
+    this.activeVoiceCalls.delete(callId);
+
+    if (notify.length === 0) {
+      return;
+    }
+    this.realtime.emitCallEnded(notify, {
+      callId: call.callId,
+      conversationId: call.conversationId,
+      byUserId: call.fromUserId,
+    });
+  }
+
+  private clearVoiceCallRingTimer(call: ActiveVoiceCall) {
+    if (call.ringTimer) {
+      clearTimeout(call.ringTimer);
+      call.ringTimer = undefined;
+    }
+  }
+
+  private clearVoiceCallWaitTimer(call: ActiveVoiceCall) {
+    if (call.waitTimer) {
+      clearTimeout(call.waitTimer);
+      call.waitTimer = undefined;
+    }
+  }
+
+  private clearVoiceCallTimers(call: ActiveVoiceCall) {
+    this.clearVoiceCallRingTimer(call);
+    this.clearVoiceCallWaitTimer(call);
+  }
+
+  private async toVoiceCallPeers(userIds: string[]) {
+    if (userIds.length === 0) {
+      return [] as Array<{
+        userId: string;
+        nickname: string;
+        avatarUrl: string | null;
+      }>;
+    }
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, nickname: true },
+    });
+    const byId = new Map(users.map((u) => [u.id, u]));
+    return Promise.all(
+      userIds.map(async (id) => {
+        const user = byId.get(id);
+        return {
+          userId: id,
+          nickname: user?.nickname ?? id,
+          avatarUrl: await this.getAvatarUrl(id, 'display'),
+        };
+      }),
+    );
+  }
+
+  private async postMissedVoiceCallMessage(callerId: string, conversationId: string) {
+    const now = new Date();
+    const message = await this.prisma.message.create({
+      data: {
+        conversationId,
+        senderId: callerId,
+        body: 'Пропущенный звонок',
+        kind: MessageKind.MISSED_VOICE_CALL,
+      },
+    });
+
+    const participantIds = await this.getParticipantIds(conversationId);
+
+    await this.prisma.$transaction([
+      this.prisma.conversation.update({
+        where: { id: conversationId },
+        data: { lastMessageAt: now },
+      }),
+      this.prisma.conversationRead.upsert({
+        where: {
+          conversationId_userId: { conversationId, userId: callerId },
+        },
+        create: { conversationId, userId: callerId, lastReadAt: now, hiddenAt: null },
+        update: { lastReadAt: now, hiddenAt: null },
+      }),
+      ...participantIds
+        .filter((id) => id !== callerId)
+        .map((id) =>
+          this.prisma.conversationRead.upsert({
+            where: {
+              conversationId_userId: { conversationId, userId: id },
+            },
+            create: {
+              conversationId,
+              userId: id,
+              lastReadAt: new Date(0),
+              hiddenAt: null,
+            },
+            update: { hiddenAt: null },
+          }),
+        ),
+    ]);
+
+    const dto = await this.toMessageDto(message);
+    this.realtime.emitMessageNew(participantIds, dto);
+    await Promise.all(
+      participantIds.map(async (id) => {
+        const summary = await this.getConversationSummary(id, conversationId);
+        this.realtime.emitConversationUpdated([id], summary);
+      }),
+    );
+    await this.emitUnreadForUsers(participantIds);
+    return dto;
+  }
+
+  private findActiveCallForConversation(conversationId: string) {
+    for (const call of this.activeVoiceCalls.values()) {
+      if (call.conversationId === conversationId) {
+        return call;
+      }
+    }
+    return null;
+  }
+
+  private requireVoiceCall(callId: string, conversationId: string) {
+    this.pruneExpiredVoiceCalls();
+    if (!callId.trim()) {
+      throw new BadRequestException('Не указан звонок');
+    }
+    const call = this.activeVoiceCalls.get(callId);
+    if (!call || call.conversationId !== conversationId) {
+      throw new NotFoundException('Звонок уже завершён');
+    }
+    return call;
+  }
+
+  private pruneExpiredVoiceCalls() {
+    const now = Date.now();
+    for (const [id, call] of this.activeVoiceCalls) {
+      // Multi-party rooms stay until hangup.
+      if (call.joinedUserIds.length > 1) {
+        continue;
+      }
+      if (now - call.createdAt > VOICE_CALL_TTL_MS) {
+        this.clearVoiceCallTimers(call);
+        this.activeVoiceCalls.delete(id);
+      }
+    }
+  }
+
   async deleteConversation(userId: string, conversationId: string, forEveryone = false) {
     const membership = await this.prisma.conversationParticipant.findUnique({
       where: {
@@ -2085,6 +3003,7 @@ export class ChatsService {
         memberCount: conversation.participants.length,
         membersPreview: await Promise.all(previewUsers.map((user) => this.toPeerDto(user))),
         peerLastReadAt: null,
+        myRole: toChatMemberRole(membership.role),
         lastMessage,
         unread,
         isFavorite: false,
@@ -2502,10 +3421,17 @@ export class ChatsService {
       where: { id: message.senderId },
       select: { id: true, nickname: true },
     });
+    const look =
+      (await this.rewardsService.getLooksForUsers([message.senderId])).get(message.senderId) ?? {
+        badges: [],
+        avatarFrameId: null,
+      };
     const sender: ChatMessageSender = {
       id: message.senderId,
       nickname: senderUser?.nickname ?? 'Игрок',
       avatarUrl: await this.getAvatarUrl(message.senderId),
+      badges: look.badges,
+      avatarFrameId: look.avatarFrameId,
     };
 
     const messageKind = toChatMessageKind(message.kind);
@@ -2611,22 +3537,36 @@ export class ChatsService {
     nickname: string;
     lastSeenAt: Date | null;
   }): Promise<ChatPeer> {
+    const look =
+      (await this.rewardsService.getLooksForUsers([peer.id])).get(peer.id) ?? {
+        badges: [],
+        avatarFrameId: null,
+      };
     return {
       id: peer.id,
       nickname: peer.nickname,
       avatarUrl: await this.getAvatarUrl(peer.id),
-      online: this.realtime.isOnline(peer.id),
+      online: this.realtime.isPresent(peer.id, peer.lastSeenAt),
       lastSeenAt: peer.lastSeenAt?.toISOString() ?? null,
+      badges: look.badges,
+      avatarFrameId: look.avatarFrameId,
     };
   }
 
-  private async getAvatarUrl(userId: string): Promise<string | null> {
+  private async getAvatarUrl(
+    userId: string,
+    quality: 'list' | 'display' = 'list',
+  ): Promise<string | null> {
     const media = await this.mediaService.getCollection({
       entityType: 'User',
       entityId: userId,
       collection: 'avatar',
     });
     const urls = await this.mediaService.getCollectionUrls(media);
+    // Call tiles are ~96–128px (retina → 256): thumb(64) looks muddy.
+    if (quality === 'display') {
+      return urls.medium ?? urls.large ?? urls.small ?? urls.thumb ?? null;
+    }
     return urls.thumb ?? urls.small ?? urls.medium ?? urls.large ?? null;
   }
 }

@@ -23,6 +23,7 @@ import { MediaService } from '../media/media.service';
 import { MarketingConversionsService } from '../marketing/conversions/marketing-conversions.service';
 import { NotificationSoundsService } from '../notification-sounds/notification-sounds.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RewardsService } from '../rewards/rewards.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import type {
@@ -62,6 +63,26 @@ const USER_PROFILE_SELECT = {
   useCustomNotificationSound: true,
   createdAt: true,
   updatedAt: true,
+  equippedAvatarFrameId: true,
+  equippedQuestionnaireAuraId: true,
+  visibleBadgeTypes: true,
+  rewards: {
+    select: {
+      id: true,
+      userId: true,
+      badgeType: true,
+      customDiceSkinId: true,
+      bonusCharacterSlots: true,
+      grantedAt: true,
+    },
+    orderBy: { grantedAt: 'asc' },
+  },
+  cosmeticUnlocks: {
+    select: {
+      kind: true,
+      itemId: true,
+    },
+  },
   notificationSoundPreset: {
     select: {
       id: true,
@@ -149,6 +170,21 @@ type UserWithRelations = {
   useCustomNotificationSound: boolean;
   createdAt: Date;
   updatedAt: Date;
+  equippedAvatarFrameId: string | null;
+  equippedQuestionnaireAuraId: string | null;
+  visibleBadgeTypes: unknown;
+  rewards: {
+    id: string;
+    userId: string;
+    badgeType: 'alpha_tester' | 'bug_hunter' | 'founding_dm' | 'early_arrival' | 'tavern_keeper';
+    customDiceSkinId: string | null;
+    bonusCharacterSlots: number;
+    grantedAt: Date;
+  }[];
+  cosmeticUnlocks: {
+    kind: string;
+    itemId: string;
+  }[];
   notificationSoundPreset: {
     id: string;
     slug: string;
@@ -188,6 +224,7 @@ export class UsersService {
     private readonly marketingConversions: MarketingConversionsService,
     @Inject(forwardRef(() => ChatsService))
     private readonly chatsService: ChatsService,
+    private readonly rewardsService: RewardsService,
   ) {}
 
   async getProfile(userId: string): Promise<UserProfile> {
@@ -1123,6 +1160,16 @@ export class UsersService {
       effectiveNotificationSoundUrl: null,
       avatar: Object.keys(avatarUrls).length > 0 ? avatarUrls : null,
       profileCard: hasProfileCard ? profileCardUrls : null,
+      rewards: user.rewards,
+      perks: this.rewardsService.buildPerks(
+        user.rewards,
+        {
+          equippedAvatarFrameId: user.equippedAvatarFrameId,
+          equippedQuestionnaireAuraId: user.equippedQuestionnaireAuraId,
+          visibleBadgeTypes: user.visibleBadgeTypes,
+        },
+        user.cosmeticUnlocks,
+      ),
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
@@ -1169,6 +1216,15 @@ export class UsersService {
 
     const cities = this.mapProfileCities(user);
     const cityNames = cities.map((city) => city.name);
+    const perks = this.rewardsService.buildPerks(
+      user.rewards,
+      {
+        equippedAvatarFrameId: user.equippedAvatarFrameId,
+        equippedQuestionnaireAuraId: user.equippedQuestionnaireAuraId,
+        visibleBadgeTypes: user.visibleBadgeTypes,
+      },
+      user.cosmeticUnlocks,
+    );
 
     return {
       id: user.id,
@@ -1189,6 +1245,9 @@ export class UsersService {
       experienceLabel: user.experiences[0]?.experienceType.name ?? null,
       profileCard: hasProfileCard ? profileCardUrls : null,
       blockedByMe: options?.blockedByMe ?? false,
+      badges: perks.visibleBadges,
+      avatarFrameId: perks.avatarFrameId,
+      questionnaireAuraId: perks.questionnaireAuraId,
     };
   }
 }

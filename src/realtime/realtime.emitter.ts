@@ -3,6 +3,8 @@ import { Server } from 'socket.io';
 
 import {
   REALTIME_EVENTS,
+  type CallInvitePayload,
+  type CallSignalPayload,
   type ConversationDeletedPayload,
   type ConversationReadPayload,
   type PresenceUpdatePayload,
@@ -46,6 +48,20 @@ export class RealtimeEmitter {
     return (this.onlineSockets.get(userId)?.size ?? 0) > 0;
   }
 
+  /**
+   * Online for chat UI: active websocket, or recent HTTP activity from any app section.
+   * Keeps "в сети" accurate when the user browses games/profile without opening chats.
+   */
+  isPresent(userId: string, lastSeenAt?: Date | null): boolean {
+    if (this.isOnline(userId)) {
+      return true;
+    }
+    if (!lastSeenAt) {
+      return false;
+    }
+    return Date.now() - lastSeenAt.getTime() < 90_000;
+  }
+
   /** Unique users with at least one active socket. */
   onlineCount(): number {
     return this.onlineSockets.size;
@@ -87,6 +103,22 @@ export class RealtimeEmitter {
 
   emitPresenceUpdate(userIds: string[], payload: PresenceUpdatePayload) {
     this.emitToUsers(userIds, REALTIME_EVENTS.PRESENCE_UPDATE, payload);
+  }
+
+  emitCallInvite(userIds: string[], payload: CallInvitePayload) {
+    this.emitToUsers(userIds, REALTIME_EVENTS.CALL_INVITE, payload);
+  }
+
+  emitCallAccepted(userIds: string[], payload: CallSignalPayload) {
+    this.emitToUsers(userIds, REALTIME_EVENTS.CALL_ACCEPTED, payload);
+  }
+
+  emitCallDeclined(userIds: string[], payload: CallSignalPayload) {
+    this.emitToUsers(userIds, REALTIME_EVENTS.CALL_DECLINED, payload);
+  }
+
+  emitCallEnded(userIds: string[], payload: CallSignalPayload) {
+    this.emitToUsers(userIds, REALTIME_EVENTS.CALL_ENDED, payload);
   }
 
   userRoom(userId: string) {

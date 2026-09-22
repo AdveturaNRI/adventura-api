@@ -12,8 +12,13 @@ type JwtPayload = {
   nickname: string;
 };
 
+/** Touch lastSeen at most once per this window per user (any authenticated HTTP call). */
+const LAST_SEEN_TOUCH_MS = 30_000;
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
+  private readonly lastSeenTouchAt = new Map<string, number>();
+
   constructor(
     configService: ConfigService,
     private readonly prisma: PrismaService,
@@ -39,6 +44,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     if (!user) {
       throw new UnauthorizedException();
+    }
+
+    // Any section of the app that hits the API keeps presence warm — not only chats.
+    const now = Date.now();
+    const prev = this.lastSeenTouchAt.get(user.id) ?? 0;
+    if (now - prev >= LAST_SEEN_TOUCH_MS) {
+      this.lastSeenTouchAt.set(user.id, now);
+      void this.prisma.user
+        .update({
+          where: { id: user.id },
+          data: { lastSeenAt: new Date(now) },
+        })
+        .catch(() => undefined);
     }
 
     return {

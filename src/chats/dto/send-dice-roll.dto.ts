@@ -64,6 +64,11 @@ export class SendDiceRollDto {
   @Matches(/^#[0-9A-Fa-f]{6}$/)
   color?: string;
 
+  /** Эксклюзивный скин кубиков (alpha_pioneer и т.п.). */
+  @IsOptional()
+  @IsIn(['standard', 'alpha_pioneer', 'neon_glitch', 'founding_obsidian'])
+  skin?: string;
+
   /** Итог броска с фронта — источник истины. Без поля сервер бросает сам (legacy). */
   @IsOptional()
   @IsArray()

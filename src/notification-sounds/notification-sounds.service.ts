@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
@@ -40,13 +41,22 @@ export type NotificationSoundPresetDto = {
 
 @Injectable()
 export class NotificationSoundsService implements OnModuleInit {
+  private readonly logger = new Logger(NotificationSoundsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly mediaService: MediaService,
   ) {}
 
   async onModuleInit() {
-    await this.ensureSeedMedia();
+    try {
+      await this.ensureSeedMedia();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Не удалось залить seed-звуки в S3 — пресеты без URL, пока не починится сторадж: ${message}`,
+      );
+    }
   }
 
   private resolveSeedDir() {

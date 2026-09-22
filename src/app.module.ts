@@ -17,6 +17,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { PushSubscriptionsModule } from './push-subscriptions/push-subscriptions.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { ReferenceModule } from './reference/reference.module';
+import { RewardsModule } from './rewards/rewards.module';
 import { StorageModule } from './storage/storage.module';
 import { UsersModule } from './users/users.module';
 
@@ -34,6 +35,7 @@ import { UsersModule } from './users/users.module';
     AuthModule,
     ReferenceModule,
     UsersModule,
+    RewardsModule,
     HealthModule,
     RealtimeModule,
     ChatsModule,

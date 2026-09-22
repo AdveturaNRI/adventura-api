@@ -22,10 +22,13 @@ export type DiceRollPayload = {
   redacted?: boolean;
   /** Hex `#RRGGBB` цвета кубов отправителя. */
   color?: string;
+  /** Эксклюзивный скин: alpha_pioneer / neon_glitch / founding_obsidian. */
+  skin?: string;
   mode?: DiceRollMode;
 };
 
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+const DICE_SKINS = new Set(['alpha_pioneer', 'neon_glitch', 'founding_obsidian']);
 
 export function normalizeDiceColor(raw: string | null | undefined): string | undefined {
   if (!raw?.trim()) {
@@ -36,6 +39,14 @@ export function normalizeDiceColor(raw: string | null | undefined): string | und
     return undefined;
   }
   return `#${value.slice(1).toUpperCase()}`;
+}
+
+export function normalizeDiceSkin(raw: string | null | undefined): string | undefined {
+  if (!raw?.trim()) {
+    return undefined;
+  }
+  const value = raw.trim();
+  return DICE_SKINS.has(value) ? value : undefined;
 }
 
 export type DiceRollDieInput = {
@@ -153,6 +164,7 @@ export function buildDicePayloadFromClient(
   modifier = 0,
   color?: string,
   mode: DiceRollMode = 'normal',
+  skin?: string,
 ): DiceRollPayload | string {
   const resolvedMode = normalizeMode(mode);
   const expected = [...dice].sort((a, b) => a.sides - b.sides);
@@ -189,6 +201,7 @@ export function buildDicePayloadFromClient(
 
   const resolved = totalFromGroups(groups, values, modifier, resolvedMode);
   const normalizedColor = normalizeDiceColor(color);
+  const normalizedSkin = normalizeDiceSkin(skin);
   return {
     v: DICE_ROLL_PAYLOAD_VERSION,
     formula: formatDiceFormula(dice, modifier, resolvedMode),
@@ -198,6 +211,7 @@ export function buildDicePayloadFromClient(
     sum: resolved.sum,
     hidden: false,
     ...(normalizedColor ? { color: normalizedColor } : {}),
+    ...(normalizedSkin ? { skin: normalizedSkin } : {}),
     ...(resolvedMode !== 'normal' ? { mode: resolvedMode } : {}),
   };
 }
@@ -208,6 +222,7 @@ export function rollDiceServerSide(
   modifier = 0,
   color?: string,
   mode: DiceRollMode = 'normal',
+  skin?: string,
 ): DiceRollPayload {
   const resolvedMode = normalizeMode(mode);
   const groups: DiceRollGroupPayload[] = [];
@@ -229,6 +244,7 @@ export function rollDiceServerSide(
 
   const resolved = totalFromGroups(groups, values, modifier, resolvedMode);
   const normalizedColor = normalizeDiceColor(color);
+  const normalizedSkin = normalizeDiceSkin(skin);
   return {
     v: DICE_ROLL_PAYLOAD_VERSION,
     formula: formatDiceFormula(dice, modifier, resolvedMode),
@@ -238,6 +254,7 @@ export function rollDiceServerSide(
     sum: resolved.sum,
     hidden: false,
     ...(normalizedColor ? { color: normalizedColor } : {}),
+    ...(normalizedSkin ? { skin: normalizedSkin } : {}),
     ...(resolvedMode !== 'normal' ? { mode: resolvedMode } : {}),
   };
 }
@@ -256,6 +273,7 @@ export function parseDiceRollPayload(body: string | null | undefined): DiceRollP
       return null;
     }
     const color = normalizeDiceColor(parsed.color);
+    const skin = normalizeDiceSkin(parsed.skin);
     const mode = normalizeMode(parsed.mode);
     return {
       v: DICE_ROLL_PAYLOAD_VERSION,
@@ -267,6 +285,7 @@ export function parseDiceRollPayload(body: string | null | undefined): DiceRollP
       hidden: Boolean(parsed.hidden),
       redacted: Boolean(parsed.redacted),
       ...(color ? { color } : {}),
+      ...(skin ? { skin } : {}),
       ...(mode !== 'normal' ? { mode } : {}),
     };
   } catch {
@@ -286,6 +305,7 @@ export function redactDiceRollPayload(payload: DiceRollPayload): DiceRollPayload
     hidden: true,
     redacted: true,
     ...(payload.color ? { color: payload.color } : {}),
+    ...(payload.skin ? { skin: payload.skin } : {}),
     ...(payload.mode && payload.mode !== 'normal' ? { mode: payload.mode } : {}),
   };
 }
