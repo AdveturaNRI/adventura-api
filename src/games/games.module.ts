@@ -4,6 +4,7 @@ import { AuthModule } from '../auth/auth.module';
 import { ChatsModule } from '../chats/chats.module';
 import { ImageModule } from '../image/image.module';
 import { MediaModule } from '../media/media.module';
+import { MarketingConversionsModule } from '../marketing/conversions/marketing-conversions.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { GamesController } from './games.controller';
 import { GamesService } from './games.service';
@@ -14,6 +15,7 @@ import { GamesService } from './games.service';
     MediaModule,
     ImageModule,
     ChatsModule,
+    MarketingConversionsModule,
     forwardRef(() => NotificationsModule),
   ],
   controllers: [GamesController],

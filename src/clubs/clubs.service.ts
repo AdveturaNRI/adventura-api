@@ -85,32 +85,38 @@ export class ClubsService {
     private readonly analytics: AnalyticsService,
   ) {}
 
-  async listMap(viewerId: string): Promise<ClubListItem[]> {
+  async listMap(viewerId: string | null): Promise<ClubListItem[]> {
     const clubs = await this.prisma.club.findMany({
       where: {
         deletedAt: null,
-        OR: [
-          { isPublished: true },
-          { ownerId: viewerId },
-          {
-            members: {
-              some: {
-                userId: viewerId,
-                role: { in: [ClubMemberRole.OWNER, ClubMemberRole.ADMIN] },
-              },
-            },
-          },
-        ],
+        ...(viewerId
+          ? {
+              OR: [
+                { isPublished: true },
+                { ownerId: viewerId },
+                {
+                  members: {
+                    some: {
+                      userId: viewerId,
+                      role: { in: [ClubMemberRole.OWNER, ClubMemberRole.ADMIN] },
+                    },
+                  },
+                },
+              ],
+            }
+          : { isPublished: true }),
       },
       select: CLUB_SELECT,
       orderBy: { updatedAt: 'desc' },
       take: 500,
     });
 
-    const manageableClubIds = await this.findManageableClubIds(
-      viewerId,
-      clubs.map((club) => club.id),
-    );
+    const manageableClubIds = viewerId
+      ? await this.findManageableClubIds(
+          viewerId,
+          clubs.map((club) => club.id),
+        )
+      : new Set<string>();
     return Promise.all(
       clubs.map((club) =>
         this.toListItem(club, viewerId, manageableClubIds.has(club.id)),
@@ -141,7 +147,7 @@ export class ClubsService {
     return Promise.all(clubs.map((club) => this.toListItem(club, ownerId, true)));
   }
 
-  async getOne(viewerId: string, clubId: string): Promise<ClubListItem> {
+  async getOne(viewerId: string | null, clubId: string): Promise<ClubListItem> {
     const club = await this.prisma.club.findUnique({
       where: { id: clubId },
       select: CLUB_SELECT,
@@ -151,7 +157,7 @@ export class ClubsService {
       throw new NotFoundException('Клуб не найден');
     }
 
-    const canManage = await this.canManage(viewerId, club);
+    const canManage = viewerId ? await this.canManage(viewerId, club) : false;
     if (!club.isPublished && !canManage) {
       throw new NotFoundException('Клуб не найден');
     }
@@ -1087,8 +1093,8 @@ export class ClubsService {
 
   private async toListItem(
     club: ClubRow,
-    viewerId: string,
-    canManage = club.ownerId === viewerId,
+    viewerId: string | null,
+    canManage = Boolean(viewerId && club.ownerId === viewerId),
   ): Promise<ClubListItem> {
     const coverMedia = await this.mediaService.getCollection({
       entityType: CLUB_ENTITY_TYPE,

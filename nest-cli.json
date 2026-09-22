@@ -10,7 +10,16 @@
         "watchAssets": true
       },
       {
+        "include": "admin/**/*.js",
+        "watchAssets": true
+      },
+      {
         "include": "admin/**/*.jsx",
+        "outDir": "dist/src",
+        "watchAssets": true
+      },
+      {
+        "include": "admin/**/*.js",
         "outDir": "dist/src",
         "watchAssets": true
       }

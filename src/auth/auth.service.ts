@@ -17,6 +17,8 @@ import * as bcrypt from 'bcrypt';
 import { ANALYTICS_EVENTS } from '../analytics/analytics.constants';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { MailService } from '../mail/mail.service';
+import { MarketingAttributionService } from '../marketing/attribution/marketing-attribution.service';
+import { MarketingConversionsService } from '../marketing/conversions/marketing-conversions.service';
 import { NicknameService } from '../nickname/nickname.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
@@ -53,6 +55,8 @@ export class AuthService {
     private readonly mailService: MailService,
     @Inject(forwardRef(() => AnalyticsService))
     private readonly analytics: AnalyticsService,
+    private readonly attribution: MarketingAttributionService,
+    private readonly conversions: MarketingConversionsService,
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthResponse> {
@@ -97,6 +101,37 @@ export class AuthService {
         is_guest: false,
       },
     });
+
+    if (dto.anonymousId) {
+      await this.attribution
+        .bindAnonymousTouches(user.id, dto.anonymousId)
+        .catch((error: unknown) => {
+          this.logger.warn(
+            `Failed to bind marketing touches after register: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        });
+    }
+
+    void this.conversions
+      .recordConversion({
+        type: 'REGISTRATION_COMPLETED',
+        userId: user.id,
+        anonymousId: dto.anonymousId,
+        idempotencyKey: `register:${user.id}`,
+        props: {
+          acquisition_source:
+            dto.acquisitionSource?.trim().slice(0, 64) || 'direct',
+        },
+      })
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `Failed to record marketing conversion after register: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
 
     void this.sendVerificationEmail(user).catch((error) => {
       this.logger.warn(

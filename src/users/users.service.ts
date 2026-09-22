@@ -20,6 +20,7 @@ import {
 import { AnalyticsService } from '../analytics/analytics.service';
 import { ChatsService } from '../chats/chats.service';
 import { MediaService } from '../media/media.service';
+import { MarketingConversionsService } from '../marketing/conversions/marketing-conversions.service';
 import { NotificationSoundsService } from '../notification-sounds/notification-sounds.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RewardsService } from '../rewards/rewards.service';
@@ -220,6 +221,7 @@ export class UsersService {
     private readonly notificationsService: NotificationsService,
     private readonly notificationSounds: NotificationSoundsService,
     private readonly analytics: AnalyticsService,
+    private readonly marketingConversions: MarketingConversionsService,
     @Inject(forwardRef(() => ChatsService))
     private readonly chatsService: ChatsService,
     private readonly rewardsService: RewardsService,
@@ -835,6 +837,14 @@ export class UsersService {
           roles: mapAppRolesToAnalytics(user.roles),
         },
       });
+      void this.marketingConversions
+        .recordConversion({
+          type: 'PROFILE_CREATED',
+          userId,
+          idempotencyKey: `profile_created:${userId}`,
+          props: { free_only: user.prefersFreeOnly },
+        })
+        .catch(() => undefined);
     }
 
     return profile;

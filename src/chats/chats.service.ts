@@ -71,10 +71,9 @@ type ActiveVoiceCall = {
   waitTimer?: ReturnType<typeof setTimeout>;
 };
 
-function toConversationBackground(row: {
+function toConversationBackgroundBase(row: {
   backgroundKind: string | null;
   backgroundPresetId: string | null;
-  backgroundUrl: string | null;
 }): ConversationBackgroundDto | null {
   const kind = row.backgroundKind;
   if (kind !== 'default' && kind !== 'preset' && kind !== 'custom') {
@@ -83,7 +82,8 @@ function toConversationBackground(row: {
   return {
     kind,
     presetId: kind === 'preset' ? row.backgroundPresetId : null,
-    url: kind === 'custom' ? row.backgroundUrl : null,
+    // custom url всегда резолвится свежим signed URL из Media (не из колонки)
+    url: null,
   };
 }
 
@@ -1431,6 +1431,12 @@ export class ChatsService {
       select: { blockerId: true, blockedId: true },
     });
 
+    const customBackgroundIds = conversations
+      .filter((row) => row.backgroundKind === 'custom')
+      .map((row) => row.id);
+    const customBackgroundUrls =
+      await this.resolveCustomBackgroundUrls(customBackgroundIds);
+
     const items: ConversationListItem[] = [];
 
     for (const conversation of conversations) {
@@ -1439,6 +1445,11 @@ export class ChatsService {
       if (isHiddenForUser(myRead?.hiddenAt, last?.createdAt ?? null)) {
         continue;
       }
+
+      const background = this.attachCustomBackgroundUrl(
+        toConversationBackgroundBase(conversation),
+        customBackgroundUrls.get(conversation.id) ?? null,
+      );
 
       let attachmentKind: ChatAttachmentKind | null = null;
       if (last) {
@@ -1488,7 +1499,7 @@ export class ChatsService {
           blockedMe: false,
           isPinned: Boolean(myRead?.pinnedAt),
           pinSortOrder: myRead?.pinSortOrder ?? null,
-          background: toConversationBackground(conversation),
+          background,
           updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
         });
         continue;
@@ -1527,7 +1538,7 @@ export class ChatsService {
         blockedMe,
         isPinned: Boolean(myRead?.pinnedAt),
         pinSortOrder: myRead?.pinSortOrder ?? null,
-        background: toConversationBackground(conversation),
+        background,
         updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
       });
     }
@@ -2890,13 +2901,12 @@ export class ChatsService {
         entityId: conversationId,
         collection: 'background',
       });
-      const urls = await this.mediaService.getCollectionUrls(media);
-      const url = urls.original ?? urls.large ?? urls.medium ?? null;
-      if (!url) {
+      if (media.length === 0) {
         throw new BadRequestException('Не удалось сохранить фон');
       }
       backgroundKind = 'custom';
-      backgroundUrl = url;
+      // Не пишем signed URL в БД — он протухает. Источник правды: Media.
+      backgroundUrl = null;
     } else {
       throw new BadRequestException('Неизвестный kind');
     }
@@ -3002,7 +3012,7 @@ export class ChatsService {
         blockedMe: false,
         isPinned: Boolean(myRead?.pinnedAt),
         pinSortOrder: myRead?.pinSortOrder ?? null,
-        background: toConversationBackground(conversation),
+        background: await this.resolveConversationBackground(conversation),
         updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
       };
     }
@@ -3055,7 +3065,7 @@ export class ChatsService {
       blockedMe: flags.blockedMe,
       isPinned: Boolean(myRead?.pinnedAt),
       pinSortOrder: myRead?.pinSortOrder ?? null,
-      background: toConversationBackground(conversation),
+      background: await this.resolveConversationBackground(conversation),
       updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
     };
   }
@@ -3459,6 +3469,67 @@ export class ChatsService {
             }
           : null,
     };
+  }
+
+  private attachCustomBackgroundUrl(
+    base: ConversationBackgroundDto | null,
+    url: string | null,
+  ): ConversationBackgroundDto | null {
+    if (!base) return null;
+    if (base.kind !== 'custom') return base;
+    return { ...base, url };
+  }
+
+  private async resolveConversationBackground(row: {
+    id: string;
+    backgroundKind: string | null;
+    backgroundPresetId: string | null;
+  }): Promise<ConversationBackgroundDto | null> {
+    const base = toConversationBackgroundBase(row);
+    if (!base || base.kind !== 'custom') {
+      return base;
+    }
+    const urls = await this.resolveCustomBackgroundUrls([row.id]);
+    return this.attachCustomBackgroundUrl(base, urls.get(row.id) ?? null);
+  }
+
+  /** Fresh signed URLs for Conversation/background media (never reuse DB backgroundUrl). */
+  private async resolveCustomBackgroundUrls(
+    conversationIds: string[],
+  ): Promise<Map<string, string | null>> {
+    const result = new Map<string, string | null>();
+    if (conversationIds.length === 0) {
+      return result;
+    }
+
+    const media = await this.prisma.media.findMany({
+      where: {
+        entityType: 'Conversation',
+        entityId: { in: conversationIds },
+        collection: 'background',
+      },
+    });
+
+    const byConversation = new Map<string, typeof media>();
+    for (const item of media) {
+      const list = byConversation.get(item.entityId) ?? [];
+      list.push(item);
+      byConversation.set(item.entityId, list);
+    }
+
+    await Promise.all(
+      conversationIds.map(async (id) => {
+        const items = byConversation.get(id) ?? [];
+        if (items.length === 0) {
+          result.set(id, null);
+          return;
+        }
+        const urls = await this.mediaService.getCollectionUrls(items);
+        result.set(id, urls.original ?? urls.large ?? urls.medium ?? null);
+      }),
+    );
+
+    return result;
   }
 
   private async toPeerDto(peer: {

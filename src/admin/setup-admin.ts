@@ -13,6 +13,7 @@ import {
 } from '../analytics/analytics.constants';
 import { AppSettingsService } from '../app-settings/app-settings.service';
 import { loadEsmModule } from '../common/load-esm-module';
+import { MarketingLandingsService } from '../marketing/landings/marketing-landings.service';
 import { BroadcastService } from '../notifications/broadcast.service';
 import { NotificationSoundsService } from '../notification-sounds/notification-sounds.service';
 import { PushSubscriptionsService } from '../push-subscriptions/push-subscriptions.service';
@@ -22,6 +23,8 @@ import {
   buildQuestionnaireCompletionInput,
   isEligibleForWanderersFeed,
 } from '../users/utils/questionnaire-completion.util';
+import { MarketingCampaignsService } from '../marketing/campaigns/marketing-campaigns.service';
+import { MarketingAnalyticsService } from '../marketing/analytics/marketing-analytics.service';
 import {
   createGrantRewardsPageHandler,
   handleGrantRewardRecordCreate,
@@ -1055,6 +1058,18 @@ export async function setupAdmin(
     'PushSettings',
     resolveAdminComponent('push-settings'),
   );
+  const landingEditorComponent = componentLoader.add(
+    'MarketingLandingEditor',
+    resolveAdminComponent('marketing-landings-admin'),
+  );
+  const marketingCampaignsComponent = componentLoader.add(
+    'MarketingCampaignsAdmin',
+    resolveAdminComponent('marketing-campaigns-admin'),
+  );
+  const marketingAnalyticsComponent = componentLoader.add(
+    'MarketingAnalyticsAdmin',
+    resolveAdminComponent('marketing-analytics-admin'),
+  );
   const GrantRewardsComponent = componentLoader.add(
     'GrantRewards',
     resolveAdminComponent('components/grant-rewards'),
@@ -1065,6 +1080,9 @@ export async function setupAdmin(
   const notificationSounds = app.get(NotificationSoundsService);
   const broadcasts = app.get(BroadcastService);
   const pushSubscriptions = app.get(PushSubscriptionsService);
+  const marketingLandings = app.get(MarketingLandingsService);
+  const marketingCampaigns = app.get(MarketingCampaignsService);
+  const marketingAnalytics = app.get(MarketingAnalyticsService);
   const rewards = app.get(RewardsService);
 
   const admin = new AdminJS({
@@ -1390,6 +1408,258 @@ export async function setupAdmin(
           return buildStatus();
         },
       },
+      marketingLandings: {
+        icon: 'Edit',
+        component: landingEditorComponent,
+        handler: async (request: { method?: string; payload?: Record<string, unknown> }) => {
+          const list = () => marketingLandings.listAdmin();
+          if ((request.method ?? 'get').toLowerCase() !== 'post') return { items: await list() };
+          try {
+            const payload = request.payload ?? {};
+            const action = String(payload.action ?? '');
+            const content = payload.content ? JSON.parse(String(payload.content)) : undefined;
+            const seo = payload.seo ? JSON.parse(String(payload.seo)) : undefined;
+            const decodeFile = (data: Record<string, unknown>) => {
+              const raw = String(data.fileBase64 ?? '').trim();
+              if (!raw) return undefined;
+              const base64 = raw.includes(',') ? raw.split(',').pop() ?? '' : raw;
+              if (!base64) return undefined;
+              return {
+                buffer: Buffer.from(base64, 'base64'),
+                mimetype: String(data.fileMime ?? 'image/jpeg'),
+                originalname: String(data.fileName ?? 'image.jpg'),
+              };
+            };
+
+            if (action === 'create') {
+              await marketingLandings.createDraft({
+                name: String(payload.name ?? ''),
+                slug: String(payload.slug ?? ''),
+                description: String(payload.description ?? ''),
+                content,
+                seo,
+              });
+              return { items: await list(), notice: { message: 'Сохранено', type: 'success' } };
+            }
+
+            if (action === 'save') {
+              await marketingLandings.updateDraft(String(payload.id ?? ''), {
+                name: payload.name === undefined ? undefined : String(payload.name),
+                slug: payload.slug === undefined ? undefined : String(payload.slug),
+                description:
+                  payload.description === undefined
+                    ? undefined
+                    : String(payload.description),
+                content,
+                seo,
+              });
+              return { items: await list(), notice: { message: 'Сохранено', type: 'success' } };
+            }
+
+            if (action === 'publish') {
+              await marketingLandings.publish(String(payload.id ?? ''));
+              return { items: await list(), notice: { message: 'Сохранено', type: 'success' } };
+            }
+
+            if (action === 'archive') {
+              await marketingLandings.archive(String(payload.id ?? ''));
+              return { items: await list(), notice: { message: 'Сохранено', type: 'success' } };
+            }
+
+            if (action === 'uploadImage') {
+              const id = String(payload.id ?? '');
+              const file = decodeFile(payload);
+              if (!file) {
+                throw new Error('Файл не передан');
+              }
+              const uploaded = await marketingLandings.uploadImage(id, file);
+              return {
+                items: await list(),
+                uploaded,
+                notice: { message: uploaded.url ? 'Картинка загружена' : 'Картинка загружена (без URL)', type: 'success' },
+              };
+            }
+
+            throw new Error('Неизвестное действие');
+          } catch (error) {
+            return { items: await list(), notice: { message: error instanceof Error ? error.message : 'Не удалось выполнить действие', type: 'error' } };
+          }
+        },
+      },
+      marketingCampaigns: {
+        icon: 'Marketing',
+        component: marketingCampaignsComponent,
+        handler: async (request: { method?: string; payload?: Record<string, unknown> }) => {
+          const method = (request.method ?? 'get').toLowerCase();
+          const basePayload = async () => ({
+            campaigns: await marketingCampaigns.listCampaigns({ includeArchived: true }),
+            webPublicUrl: marketingCampaigns.getPublicWebOrigin(),
+            landings: await prisma.marketingLanding.findMany({
+              orderBy: [{ updatedAt: 'desc' }],
+              select: { id: true, name: true, slug: true, status: true },
+              take: 500,
+            }),
+          });
+          if (method !== 'post') {
+            return basePayload();
+          }
+          try {
+            const payload = request.payload ?? {};
+            const action = String(payload.action ?? '');
+
+            if (action === 'createCampaign') {
+              await marketingCampaigns.createCampaign({
+                name: String(payload.name ?? ''),
+                platform: (payload.platform as never) ?? undefined,
+                description: payload.description !== undefined ? String(payload.description) : undefined,
+                objective: payload.objective !== undefined ? String(payload.objective) : undefined,
+              });
+              return { ...(await basePayload()), notice: { message: 'Кампания создана', type: 'success' } };
+            }
+
+            if (action === 'updateCampaign') {
+              await marketingCampaigns.updateCampaign(String(payload.id ?? ''), {
+                name: payload.name !== undefined ? String(payload.name) : undefined,
+                description: payload.description !== undefined ? String(payload.description) : undefined,
+                objective: payload.objective !== undefined ? String(payload.objective) : undefined,
+                platform: payload.platform as never,
+                status: payload.status as never,
+                plannedBudget: payload.plannedBudget !== undefined ? Number(payload.plannedBudget) : undefined,
+                currency: payload.currency !== undefined ? String(payload.currency) : undefined,
+                externalCampaignId: payload.externalCampaignId !== undefined ? String(payload.externalCampaignId) : undefined,
+                startsAt: payload.startsAt !== undefined ? String(payload.startsAt) : undefined,
+                endsAt: payload.endsAt !== undefined ? String(payload.endsAt) : undefined,
+              });
+              return { ...(await basePayload()), notice: { message: 'Сохранено', type: 'success' } };
+            }
+
+            if (action === 'archiveCampaign') {
+              await marketingCampaigns.archiveCampaign(String(payload.id ?? ''));
+              return { ...(await basePayload()), notice: { message: 'Кампания архивирована', type: 'success' } };
+            }
+
+            if (action === 'createVariant') {
+              const variant = await marketingCampaigns.createVariant({
+                campaignId: String(payload.campaignId ?? ''),
+                landingId: String(payload.landingId ?? ''),
+                name: String(payload.variantName ?? ''),
+                utmSource: String(payload.utmSource ?? ''),
+                utmMedium: String(payload.utmMedium ?? ''),
+                utmCampaign: String(payload.utmCampaign ?? ''),
+                utmContent: payload.utmContent !== undefined ? String(payload.utmContent) : undefined,
+                utmTerm: payload.utmTerm !== undefined ? String(payload.utmTerm) : undefined,
+                utmId: payload.utmId !== undefined ? String(payload.utmId) : undefined,
+              });
+              const landing = await prisma.marketingLanding.findUnique({
+                where: { id: variant.landingId },
+                select: { status: true },
+              });
+              let variantUrl = null;
+              let urlWarning = '';
+              if (landing?.status === 'PUBLISHED') {
+                try {
+                  variantUrl = await marketingCampaigns.getVariantUrlFromConfig(variant.id);
+                } catch (error) {
+                  urlWarning =
+                    error instanceof Error
+                      ? error.message
+                      : 'Не удалось сформировать рекламную ссылку';
+                }
+              }
+              return {
+                ...(await basePayload()),
+                campaign: await marketingCampaigns.getCampaign(variant.campaignId),
+                variantUrl,
+                notice: {
+                  message: variantUrl
+                    ? 'Вариант создан — ссылка и QR готовы'
+                    : urlWarning
+                      ? `Вариант создан, но ссылка пока недоступна: ${urlWarning}`
+                      : 'Вариант создан. Опубликуй лендинг, чтобы получить ссылку.',
+                  type: 'success',
+                },
+              };
+            }
+
+            if (action === 'getCampaign') {
+              const campaign = await marketingCampaigns.getCampaign(String(payload.id ?? ''));
+              return { ...(await basePayload()), campaign };
+            }
+
+            if (action === 'getVariantUrl') {
+              const variantId = String(payload.variantId ?? '');
+              const url = await marketingCampaigns.getVariantUrlFromConfig(variantId);
+              return { ...(await basePayload()), variantUrl: url };
+            }
+
+            throw new Error('Неизвестное действие');
+          } catch (error) {
+            return { ...(await basePayload()), notice: { message: error instanceof Error ? error.message : 'Не удалось выполнить действие', type: 'error' } };
+          }
+        },
+      },
+      marketingAnalytics: {
+        icon: 'Activity',
+        component: marketingAnalyticsComponent,
+        handler: async (request: { method?: string; payload?: Record<string, unknown> }) => {
+          const method = (request.method ?? 'get').toLowerCase();
+          const now = new Date();
+          const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+          const parseFilters = (payload?: Record<string, unknown>) => {
+            const p = payload ?? {};
+            return {
+              from: String(p.from ?? defaultFrom.toISOString()),
+              to: String(p.to ?? now.toISOString()),
+              platform: p.platform ? (String(p.platform) as never) : undefined,
+              campaignId: p.campaignId ? String(p.campaignId) : undefined,
+              landingId: p.landingId ? String(p.landingId) : undefined,
+              variantId: p.variantId ? String(p.variantId) : undefined,
+            };
+          };
+
+          const basePayload = async () => ({
+            campaigns: await marketingCampaigns.listCampaigns({ includeArchived: false }),
+            landings: await prisma.marketingLanding.findMany({
+              orderBy: [{ updatedAt: 'desc' }],
+              select: { id: true, name: true, slug: true, status: true },
+              take: 500,
+            }),
+          });
+
+          const filters = parseFilters(request.payload);
+
+          if (method !== 'post') {
+            const [base, overview, funnel, timeseries] = await Promise.all([
+              basePayload(),
+              marketingAnalytics.overview(filters),
+              marketingAnalytics.funnel(filters),
+              marketingAnalytics.timeseries(filters),
+            ]);
+            return { ...base, filters, overview, funnel, timeseries };
+          }
+
+          try {
+            const payload = request.payload ?? {};
+            const action = String(payload.action ?? 'query');
+            const next = parseFilters(payload);
+            if (action === 'campaignDetail') {
+              const id = String(payload.campaignId ?? '');
+              const detail = await marketingAnalytics.campaignDetail(id, next);
+              return { ...(await basePayload()), filters: next, detail };
+            }
+            const [overview, funnel, timeseries] = await Promise.all([
+              marketingAnalytics.overview(next),
+              marketingAnalytics.funnel(next),
+              marketingAnalytics.timeseries(next),
+            ]);
+            return { ...(await basePayload()), filters: next, overview, funnel, timeseries };
+          } catch (error) {
+            const [base] = await Promise.all([basePayload()]);
+            return { ...base, filters, notice: { message: error instanceof Error ? error.message : 'Не удалось выполнить действие', type: 'error' } };
+          }
+        },
+      },
     },
     resources: [
       {
@@ -1442,6 +1712,107 @@ export async function setupAdmin(
           filterProperties: ['day', 'metric'],
           showProperties: ['id', 'day', 'metric', 'value', 'updatedAt'],
           actions: { ...readOnlyActions },
+        },
+      },
+      {
+        resource: { model: getModelByName('MarketingLanding'), client: prisma },
+        options: {
+          navigation: { name: 'Маркетинг', icon: 'Marketing' },
+          sort: { sortBy: 'updatedAt', direction: 'desc' },
+          listProperties: ['name', 'slug', 'status', 'publishedAt', 'updatedAt'],
+          filterProperties: ['status', 'slug', 'publishedAt'],
+          showProperties: [
+            'id',
+            'name',
+            'slug',
+            'description',
+            'status',
+            'draftContent',
+            'draftSeo',
+            'publishedVersionId',
+            'publishedAt',
+            'createdAt',
+            'updatedAt',
+          ],
+          actions: {
+            delete: { isVisible: false },
+            bulkDelete: { isVisible: false },
+            publish: {
+              actionType: 'record',
+              icon: 'Publish',
+              guard: 'Будет опубликована новая неизменяемая версия текущего черновика.',
+              handler: async (
+                _request: unknown,
+                _response: unknown,
+                context: { record?: { params: Record<string, unknown> } },
+              ) => {
+                const id = String(context.record?.params.id ?? '');
+                await marketingLandings.publish(id);
+                return {
+                  redirectUrl: `/admin/resources/MarketingLanding/records/${id}/show`,
+                  notice: { message: 'Новая версия лендинга опубликована', type: 'success' },
+                };
+              },
+            },
+            archive: {
+              actionType: 'record',
+              icon: 'Archive',
+              guard: 'Архивированный лендинг перестанет быть доступен публично.',
+              handler: async (
+                _request: unknown,
+                _response: unknown,
+                context: { record?: { params: Record<string, unknown> } },
+              ) => {
+                const id = String(context.record?.params.id ?? '');
+                await marketingLandings.archive(id);
+                return {
+                  redirectUrl: `/admin/resources/MarketingLanding/records/${id}/show`,
+                  notice: { message: 'Лендинг архивирован', type: 'success' },
+                };
+              },
+            },
+          },
+          properties: {
+            draftContent: { type: 'mixed' },
+            draftSeo: { type: 'mixed' },
+            status: { isVisible: { edit: false } },
+            publishedVersionId: { isVisible: { list: false, edit: false, filter: false } },
+            versions: { isVisible: false },
+          },
+        },
+      },
+      {
+        resource: { model: getModelByName('MarketingCampaign'), client: prisma },
+        options: {
+          navigation: { name: 'Маркетинг', icon: 'Marketing' },
+          sort: { sortBy: 'updatedAt', direction: 'desc' },
+          listProperties: ['name', 'platform', 'status', 'plannedBudget', 'currency', 'startsAt', 'updatedAt'],
+          filterProperties: ['platform', 'status', 'startsAt'],
+          properties: {
+            plannedBudget: { type: 'number' },
+            variants: { isVisible: false },
+            expenses: { isVisible: false },
+          },
+        },
+      },
+      {
+        resource: { model: getModelByName('MarketingCampaignVariant'), client: prisma },
+        options: {
+          navigation: { name: 'Маркетинг', icon: 'Link' },
+          sort: { sortBy: 'updatedAt', direction: 'desc' },
+          listProperties: ['name', 'campaignId', 'landingId', 'utmSource', 'utmMedium', 'utmCampaign', 'isActive'],
+          filterProperties: ['campaignId', 'landingId', 'isActive'],
+          properties: { campaign: { isVisible: false }, landing: { isVisible: false } },
+        },
+      },
+      {
+        resource: { model: getModelByName('MarketingExpense'), client: prisma },
+        options: {
+          navigation: { name: 'Маркетинг', icon: 'Money' },
+          sort: { sortBy: 'occurredAt', direction: 'desc' },
+          listProperties: ['campaignId', 'amount', 'currency', 'source', 'occurredAt', 'comment'],
+          filterProperties: ['campaignId', 'source', 'occurredAt'],
+          properties: { campaign: { isVisible: false }, amount: { type: 'number' } },
         },
       },
       {
@@ -1661,6 +2032,9 @@ export async function setupAdmin(
     'NotificationSoundsAdmin',
     'BroadcastsAdmin',
     'PushSettings',
+    'MarketingLandingEditor',
+    'MarketingCampaignsAdmin',
+    'MarketingAnalyticsAdmin',
     'GrantRewards',
   ] as const;
 

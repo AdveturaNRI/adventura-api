@@ -79,6 +79,9 @@ export const ADMIN_LOCALE_RU = {
     notificationSounds: 'Звуки уведомлений',
     broadcasts: 'Массовые оповещения',
     pushSettings: 'Web Push / FCM',
+    marketingLandings: 'Маркетинг · Лендинги',
+    marketingCampaigns: 'Маркетинг · Кампании',
+    marketingAnalytics: 'Маркетинг · Аналитика',
   },
   properties: {
     length: 'Длина',
