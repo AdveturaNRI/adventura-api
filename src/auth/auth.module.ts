@@ -4,6 +4,8 @@ import { JwtModule, type JwtSignOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 
 import { AnalyticsModule } from '../analytics/analytics.module';
+import { MarketingAttributionModule } from '../marketing/attribution/marketing-attribution.module';
+import { MarketingConversionsModule } from '../marketing/conversions/marketing-conversions.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -14,6 +16,8 @@ import { NicknameModule } from '../nickname/nickname.module';
   imports: [
     NicknameModule,
     forwardRef(() => AnalyticsModule),
+    forwardRef(() => MarketingAttributionModule),
+    MarketingConversionsModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

@@ -4,6 +4,7 @@ import { AuthModule } from '../auth/auth.module';
 import { ChatsModule } from '../chats/chats.module';
 import { ImageModule } from '../image/image.module';
 import { MediaModule } from '../media/media.module';
+import { MarketingConversionsModule } from '../marketing/conversions/marketing-conversions.module';
 import { NotificationSoundsModule } from '../notification-sounds/notification-sounds.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { UsersController } from './users.controller';
@@ -17,6 +18,7 @@ import { UsersService } from './users.service';
     ImageModule,
     NotificationsModule,
     NotificationSoundsModule,
+    MarketingConversionsModule,
     forwardRef(() => ChatsModule),
   ],
   controllers: [UsersController],

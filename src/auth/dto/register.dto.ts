@@ -2,6 +2,7 @@ import {
   IsEmail,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   MinLength,
@@ -27,4 +28,9 @@ export class RegisterDto {
   @IsString()
   @MaxLength(64)
   acquisitionSource?: string;
+
+  /** Browser-generated UUID used only to claim that browser's anonymous touches. */
+  @IsOptional()
+  @IsUUID('4', { message: 'Некорректный идентификатор посетителя' })
+  anonymousId?: string;
 }

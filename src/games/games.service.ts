@@ -21,6 +21,7 @@ import {
   ANALYTICS_EVENTS,
 } from '../analytics/analytics.constants';
 import { AnalyticsService } from '../analytics/analytics.service';
+import { MarketingConversionsService } from '../marketing/conversions/marketing-conversions.service';
 import {
   endOfZonedIsoDate,
   getZonedDateTimeParts,
@@ -131,6 +132,7 @@ export class GamesService {
     private readonly notificationsService: NotificationsService,
     private readonly chatsService: ChatsService,
     private readonly analytics: AnalyticsService,
+    private readonly marketingConversions: MarketingConversionsService,
   ) {}
 
   async listMine(ownerId: string): Promise<GameListItem[]> {
@@ -146,22 +148,24 @@ export class GamesService {
   }
 
   async listFeed(
-    viewerId: string,
+    viewerId: string | null,
     query: ListGamesFeedQueryDto = {},
   ): Promise<GameListItem[]> {
     const feedStatus =
       query.status === 'CLOSED' ? GameStatus.CLOSED : GameStatus.RECRUITING;
 
-    const blockRows = await this.prisma.userBlock.findMany({
-      where: {
-        OR: [{ blockerId: viewerId }, { blockedId: viewerId }],
-      },
-      select: { blockerId: true, blockedId: true },
-    });
-
     const excludedOwnerIds = new Set<string>();
-    for (const row of blockRows) {
-      excludedOwnerIds.add(row.blockerId === viewerId ? row.blockedId : row.blockerId);
+    if (viewerId) {
+      const blockRows = await this.prisma.userBlock.findMany({
+        where: {
+          OR: [{ blockerId: viewerId }, { blockedId: viewerId }],
+        },
+        select: { blockerId: true, blockedId: true },
+      });
+
+      for (const row of blockRows) {
+        excludedOwnerIds.add(row.blockerId === viewerId ? row.blockedId : row.blockerId);
+      }
     }
 
     const where: Prisma.GameWhereInput = {
@@ -289,7 +293,7 @@ export class GamesService {
 
     const gameIds = withSeats.map((game) => game.id);
     const [myApplications, myPlayers] =
-      gameIds.length === 0
+      !viewerId || gameIds.length === 0
         ? [[], []]
         : await Promise.all([
             this.prisma.gameApplication.findMany({
@@ -324,11 +328,11 @@ export class GamesService {
     return Promise.all(
       [...withSchedule, ...withoutSchedule].slice(0, 100).map((game) => {
         let viewerRelation: GameViewerRelation = 'none';
-        if (game.ownerId === viewerId) {
+        if (viewerId && game.ownerId === viewerId) {
           viewerRelation = 'owner';
-        } else if (playerGameIds.has(game.id)) {
+        } else if (viewerId && playerGameIds.has(game.id)) {
           viewerRelation = 'player';
-        } else {
+        } else if (viewerId) {
           const appStatus = applicationByGameId.get(game.id);
           if (appStatus === GameApplicationStatus.PENDING) {
             viewerRelation = 'pending';
@@ -438,6 +442,14 @@ export class GamesService {
       userId: viewerId,
       props: { game_id: gameId, owner_id: game.ownerId },
     });
+    void this.marketingConversions
+      .recordConversion({
+        type: 'APPLICATION_SENT',
+        userId: viewerId,
+        idempotencyKey: `application_sent:${viewerId}:${gameId}`,
+        props: { game_id: gameId },
+      })
+      .catch(() => undefined);
 
     return this.toListItem(game, {
       owner: game.owner,
@@ -549,6 +561,14 @@ export class GamesService {
         club_id: created.clubId,
       },
     });
+    void this.marketingConversions
+      .recordConversion({
+        type: 'GAME_PUBLISHED',
+        userId: ownerId,
+        idempotencyKey: `game_published:${created.id}`,
+        props: { game_id: created.id },
+      })
+      .catch(() => undefined);
 
     if (created.clubId) {
       this.analytics.track({
@@ -565,7 +585,7 @@ export class GamesService {
     return this.getOwned(ownerId, gameId);
   }
 
-  async getForViewer(viewerId: string, gameId: string): Promise<GameListItem> {
+  async getForViewer(viewerId: string | null, gameId: string): Promise<GameListItem> {
     const game = await this.prisma.game.findFirst({
       where: { id: gameId },
       select: {
@@ -584,11 +604,9 @@ export class GamesService {
       throw new NotFoundException('Игра не найдена');
     }
 
-    const viewerRelation = await this.resolveViewerRelation(
-      viewerId,
-      game.id,
-      game.ownerId,
-    );
+    const viewerRelation = viewerId
+      ? await this.resolveViewerRelation(viewerId, game.id, game.ownerId)
+      : 'none';
 
     return this.toListItem(game, {
       owner: game.owner,
@@ -835,6 +853,22 @@ export class GamesService {
         ),
       },
     });
+    void this.marketingConversions
+      .recordConversion({
+        type: 'APPLICATION_APPROVED',
+        userId: application.userId,
+        idempotencyKey: `application_approved:${application.id}`,
+        props: { game_id: gameId, application_id: application.id },
+      })
+      .catch(() => undefined);
+    void this.marketingConversions
+      .recordConversion({
+        type: 'MATCH_COMPLETED',
+        userId: application.userId,
+        idempotencyKey: `match_completed:${application.id}`,
+        props: { game_id: gameId, via: 'application_accepted' },
+      })
+      .catch(() => undefined);
 
     return this.getManage(ownerId, gameId);
   }
@@ -1280,9 +1314,13 @@ export class GamesService {
   }
 
   private async resolveViewerTimezone(
-    viewerId: string,
+    viewerId: string | null,
     hint?: string | null,
   ): Promise<string> {
+    if (!viewerId) {
+      return normalizeTimezone(hint?.trim());
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: viewerId },
       select: { timezone: true },

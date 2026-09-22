@@ -1,0 +1,113 @@
+# Suitable for Portainer's Web editor after creating the external
+# `adventura_livekit_keys` Swarm secret documented in livekit/README.md.
+#
+# This stack expects the separately managed `traefik-public` overlay network.
+# LiveKit runs as one replica because WebRTC UDP ports are published in host mode.
+
+services:
+  redis:
+    image: redis:7.4.7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.adventura.livekit == true
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 10
+
+  server:
+    image: livekit/livekit-server@sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3
+    environment:
+      # TLS for WSS is terminated by the separately deployed Traefik.
+      # The API key/secret pair itself is read from the mounted Swarm secret.
+      LIVEKIT_CONFIG: |
+        port: 7880
+        log_level: info
+        key_file: /run/secrets/livekit_keys
+        redis:
+          # Docker Swarm prefixes service DNS names with the stack name.
+          address: livekit_redis:6379
+        rtc:
+          tcp_port: 7881
+          udp_port: 7882
+          use_external_ip: true
+        turn:
+          enabled: true
+          udp_port: 3478
+          domain: call.adventu.ru
+        room:
+          empty_timeout: 300
+          departure_timeout: 20
+    secrets:
+      - source: livekit_keys
+        target: /run/secrets/livekit_keys
+        mode: 0400
+    networks:
+      - traefik-public
+      - internal
+    ports:
+      # ICE/TCP fallback for networks where UDP cannot pass.
+      - target: 7881
+        published: 7881
+        protocol: tcp
+        mode: host
+      # ICE/UDP mux. One UDP port, avoiding a 50000-60000 port range.
+      - target: 7882
+        published: 7882
+        protocol: udp
+        mode: host
+      # Embedded STUN/TURN over UDP.
+      - target: 3478
+        published: 3478
+        protocol: udp
+        mode: host
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.adventura.livekit == true
+      update_config:
+        parallelism: 1
+        order: stop-first
+        failure_action: rollback
+        monitor: 45s
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 10
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik-public
+        - traefik.http.routers.adventura-livekit.rule=Host(`call.adventu.ru`)
+        - traefik.http.routers.adventura-livekit.entrypoints=websecure
+        - traefik.http.routers.adventura-livekit.tls=true
+        - traefik.http.routers.adventura-livekit.tls.certresolver=letsencrypt
+        - traefik.http.services.adventura-livekit.loadbalancer.server.port=7880
+
+networks:
+  traefik-public:
+    external: true
+  internal:
+    driver: overlay
+    internal: true
+
+volumes:
+  redis_data:
+
+secrets:
+  livekit_keys:
+    external: true
+    name: adventura_livekit_keys

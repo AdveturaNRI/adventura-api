@@ -10,6 +10,7 @@ import { ClubsModule } from './clubs/clubs.module';
 import { GamesModule } from './games/games.module';
 import { HealthModule } from './health/health.module';
 import { MailModule } from './mail/mail.module';
+import { MarketingModule } from './marketing/marketing.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { NotificationSoundsModule } from './notification-sounds/notification-sounds.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -27,6 +28,7 @@ import { UsersModule } from './users/users.module';
     StorageModule,
     PrismaModule,
     MailModule,
+    MarketingModule,
     AppSettingsModule,
     AnalyticsModule,
     AuthModule,

@@ -8,59 +8,61 @@ datasource db {
 }
 
 model User {
-  id              String           @id @default(cuid())
-  email           String           @unique
-  nickname        String           @unique
-  passwordHash    String
-  isGuest         Boolean          @default(false)
-  emailVerifiedAt DateTime?
-  availability    String?
-  age             Int?
-  location        String?
-  cityId          String?
-  timezone        String           @default("Europe/Moscow")
-  playsOnline     Boolean          @default(false)
-  isPublic        Boolean          @default(true)
-  systems         String[]         @default([])
-  readyToLearnNew Boolean          @default(false)
-  openToAnySystem Boolean          @default(false)
-  prefersFreeOnly Boolean          @default(false)
-  about           String?
-  description     String?
-  roles           String[]         @default([])
-  questionnaireStep Int            @default(0)
-  notificationSoundsEnabled Boolean @default(true)
-  notificationSoundPresetId String?
-  useCustomNotificationSound Boolean @default(false)
-  lastSeenAt        DateTime?
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  refreshTokens   RefreshToken[]
-  emailTokens     EmailToken[]
-  statuses        UserStatus[]
-  experiences     UserExperience[]
-  city            City?            @relation(fields: [cityId], references: [id], onDelete: SetNull)
-  notificationSoundPreset NotificationSoundPreset? @relation("UserNotificationSoundPreset", fields: [notificationSoundPresetId], references: [id], onDelete: SetNull)
-  userCities      UserCity[]
-  gameSystems     UserGameSystem[]
-  wandererReactionsGiven    WandererReaction[] @relation("WandererReactionsGiven")
-  wandererReactionsReceived WandererReaction[] @relation("WandererReactionsReceived")
-  conversationsAsLow        Conversation[]     @relation("ConversationUserLow")
-  conversationsAsHigh       Conversation[]     @relation("ConversationUserHigh")
-  conversationReads         ConversationRead[]
-  conversationParticipants  ConversationParticipant[]
-  messagesSent              Message[]
-  notificationsReceived     Notification[]     @relation("NotificationsReceived")
-  notificationsActed        Notification[]     @relation("NotificationsActed")
-  blocksGiven               UserBlock[]        @relation("BlocksGiven")
-  blocksReceived            UserBlock[]        @relation("BlocksReceived")
-  gamesOwned                Game[]
-  clubsOwned                Club[]
-  clubMemberships           ClubMember[]
-  gameApplications          GameApplication[]
-  gamePlayers               GamePlayer[]
-  pushSubscriptions         PushSubscription[]
-  analyticsEvents           AnalyticsEvent[]
+  id                         String                    @id @default(cuid())
+  email                      String                    @unique
+  nickname                   String                    @unique
+  passwordHash               String
+  isGuest                    Boolean                   @default(false)
+  emailVerifiedAt            DateTime?
+  availability               String?
+  age                        Int?
+  location                   String?
+  cityId                     String?
+  timezone                   String                    @default("Europe/Moscow")
+  playsOnline                Boolean                   @default(false)
+  isPublic                   Boolean                   @default(true)
+  systems                    String[]                  @default([])
+  readyToLearnNew            Boolean                   @default(false)
+  openToAnySystem            Boolean                   @default(false)
+  prefersFreeOnly            Boolean                   @default(false)
+  about                      String?
+  description                String?
+  roles                      String[]                  @default([])
+  questionnaireStep          Int                       @default(0)
+  notificationSoundsEnabled  Boolean                   @default(true)
+  notificationSoundPresetId  String?
+  useCustomNotificationSound Boolean                   @default(false)
+  lastSeenAt                 DateTime?
+  createdAt                  DateTime                  @default(now())
+  updatedAt                  DateTime                  @updatedAt
+  refreshTokens              RefreshToken[]
+  emailTokens                EmailToken[]
+  statuses                   UserStatus[]
+  experiences                UserExperience[]
+  city                       City?                     @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  notificationSoundPreset    NotificationSoundPreset?  @relation("UserNotificationSoundPreset", fields: [notificationSoundPresetId], references: [id], onDelete: SetNull)
+  userCities                 UserCity[]
+  gameSystems                UserGameSystem[]
+  wandererReactionsGiven     WandererReaction[]        @relation("WandererReactionsGiven")
+  wandererReactionsReceived  WandererReaction[]        @relation("WandererReactionsReceived")
+  conversationsAsLow         Conversation[]            @relation("ConversationUserLow")
+  conversationsAsHigh        Conversation[]            @relation("ConversationUserHigh")
+  conversationReads          ConversationRead[]
+  conversationParticipants   ConversationParticipant[]
+  messagesSent               Message[]
+  notificationsReceived      Notification[]            @relation("NotificationsReceived")
+  notificationsActed         Notification[]            @relation("NotificationsActed")
+  blocksGiven                UserBlock[]               @relation("BlocksGiven")
+  blocksReceived             UserBlock[]               @relation("BlocksReceived")
+  gamesOwned                 Game[]
+  clubsOwned                 Club[]
+  clubMemberships            ClubMember[]
+  gameApplications           GameApplication[]
+  gamePlayers                GamePlayer[]
+  pushSubscriptions          PushSubscription[]
+  analyticsEvents            AnalyticsEvent[]
+  marketingAttributionTouches MarketingAttributionTouch[]
+  marketingConversions       MarketingConversion[]
 
   @@index([notificationSoundPresetId])
 }
@@ -159,31 +161,31 @@ enum GameApplicationStatus {
 }
 
 model Game {
-  id               String             @id @default(cuid())
+  id               String            @id @default(cuid())
   ownerId          String
-  owner            User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner            User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   userGameSystemId String
-  userGameSystem   UserGameSystem     @relation(fields: [userGameSystemId], references: [id], onDelete: Restrict)
+  userGameSystem   UserGameSystem    @relation(fields: [userGameSystemId], references: [id], onDelete: Restrict)
   title            String
   description      String?
   maxPlayers       Int
   durationHours    Int?
-  kind             GameKind           @default(ONESHOT)
-  status           GameStatus         @default(RECRUITING)
-  isOnline         Boolean            @default(false)
+  kind             GameKind          @default(ONESHOT)
+  status           GameStatus        @default(RECRUITING)
+  isOnline         Boolean           @default(false)
   cityId           String?
-  city             City?              @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  city             City?             @relation(fields: [cityId], references: [id], onDelete: SetNull)
   clubId           String?
-  club             Club?              @relation(fields: [clubId], references: [id], onDelete: SetNull)
+  club             Club?             @relation(fields: [clubId], references: [id], onDelete: SetNull)
   scheduledAt      DateTime?
-  timezone         String             @default("Europe/Moscow")
+  timezone         String            @default("Europe/Moscow")
   priceRub         Int?
   experienceTypeId String?
-  experienceType   ExperienceType?    @relation(fields: [experienceTypeId], references: [id], onDelete: SetNull)
-  beginnersWelcome Boolean            @default(false)
+  experienceType   ExperienceType?   @relation(fields: [experienceTypeId], references: [id], onDelete: SetNull)
+  beginnersWelcome Boolean           @default(false)
   minAge           Int?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
   applications     GameApplication[]
   players          GamePlayer[]
   conversation     Conversation?
@@ -251,16 +253,16 @@ model Country {
 }
 
 model City {
-  id         String   @id
+  id         String     @id
   countryId  String
   name       String
   region     String?
-  population Int      @default(0)
-  geonameId  Int?     @unique
-  isActive   Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  country    Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  population Int        @default(0)
+  geonameId  Int?       @unique
+  isActive   Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  country    Country    @relation(fields: [countryId], references: [id], onDelete: Cascade)
   users      User[]
   userCities UserCity[]
   games      Game[]
@@ -287,26 +289,26 @@ model UserCity {
 }
 
 model Club {
-  id          String   @id @default(cuid())
+  id          String       @id @default(cuid())
   ownerId     String
-  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   name        String
   description String?
   address     String
   lat         Float
   lng         Float
   cityId      String?
-  city        City?    @relation(fields: [cityId], references: [id], onDelete: SetNull)
-  tags        String[] @default([])
+  city        City?        @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  tags        String[]     @default([])
   links       Json?
   /// Physical tables available at the venue.
-  tablesCount Int      @default(1)
+  tablesCount Int          @default(1)
   /// JSON: [{ day: 1-7, closed, open: "HH:mm"|null, close: "HH:mm"|null }]
   schedule    Json
-  isPublished Boolean  @default(true)
+  isPublished Boolean      @default(true)
   deletedAt   DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
   members     ClubMember[]
   games       Game[]
 
@@ -367,19 +369,19 @@ model EmailToken {
 }
 
 model Media {
-  id         String   @id @default(cuid())
-  entityType String
-  entityId   String
-  collection String
-  variant    String
-  mimeType   String
-  path       String
-  width      Int?
-  height     Int?
-  size       Int
+  id          String   @id @default(cuid())
+  entityType  String
+  entityId    String
+  collection  String
+  variant     String
+  mimeType    String
+  path        String
+  width       Int?
+  height      Int?
+  size        Int
   durationSec Int?
-  waveform   Json?
-  createdAt  DateTime @default(now())
+  waveform    Json?
+  createdAt   DateTime @default(now())
 
   @@unique([entityType, entityId, collection, variant])
   @@index([entityType, entityId, collection])
@@ -417,25 +419,25 @@ enum ConversationParticipantRole {
 }
 
 model Conversation {
-  id            String                     @id @default(cuid())
-  type          ConversationType           @default(DIRECT)
-  title         String?
-  gameId        String?                    @unique
-  userLowId     String?
-  userHighId    String?
-  lastMessageAt DateTime?
+  id                 String                    @id @default(cuid())
+  type               ConversationType          @default(DIRECT)
+  title              String?
+  gameId             String?                   @unique
+  userLowId          String?
+  userHighId         String?
+  lastMessageAt      DateTime?
   /// Shared wallpaper: default | preset | custom. null = each user uses own settings.
   backgroundKind     String?
   backgroundPresetId String?
   backgroundUrl      String?
-  createdAt     DateTime                   @default(now())
-  updatedAt     DateTime                   @updatedAt
-  game          Game?                      @relation(fields: [gameId], references: [id], onDelete: SetNull)
-  userLow       User?                      @relation("ConversationUserLow", fields: [userLowId], references: [id], onDelete: Cascade)
-  userHigh      User?                      @relation("ConversationUserHigh", fields: [userHighId], references: [id], onDelete: Cascade)
-  messages      Message[]
-  reads         ConversationRead[]
-  participants  ConversationParticipant[]
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  game               Game?                     @relation(fields: [gameId], references: [id], onDelete: SetNull)
+  userLow            User?                     @relation("ConversationUserLow", fields: [userLowId], references: [id], onDelete: Cascade)
+  userHigh           User?                     @relation("ConversationUserHigh", fields: [userHighId], references: [id], onDelete: Cascade)
+  messages           Message[]
+  reads              ConversationRead[]
+  participants       ConversationParticipant[]
 
   @@unique([userLowId, userHighId])
   @@index([lastMessageAt])
@@ -485,24 +487,24 @@ enum MessageKind {
 }
 
 model Message {
-  id                       String       @id @default(cuid())
-  conversationId           String
-  senderId                 String
-  body                     String?
-  attachmentName           String?
-  kind                     MessageKind  @default(USER)
-  replyToId                String?
-  replyToBody              String?
-  replyToSenderNickname    String?
-  replyToHasMedia          Boolean      @default(false)
-  forwardedFromUserId      String?
-  forwardedFromNickname    String?
-  forwardedFromMessageId   String?
-  createdAt                DateTime     @default(now())
-  conversation             Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender                   User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
-  replyTo                  Message?     @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
-  replies                  Message[]    @relation("MessageReplies")
+  id                     String       @id @default(cuid())
+  conversationId         String
+  senderId               String
+  body                   String?
+  attachmentName         String?
+  kind                   MessageKind  @default(USER)
+  replyToId              String?
+  replyToBody            String?
+  replyToSenderNickname  String?
+  replyToHasMedia        Boolean      @default(false)
+  forwardedFromUserId    String?
+  forwardedFromNickname  String?
+  forwardedFromMessageId String?
+  createdAt              DateTime     @default(now())
+  conversation           Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender                 User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  replyTo                Message?     @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies                Message[]    @relation("MessageReplies")
 
   @@index([conversationId, createdAt])
   @@index([senderId])
@@ -609,15 +611,15 @@ enum AnalyticsPlatform {
 }
 
 model AnalyticsEvent {
-  id         String             @id @default(cuid())
+  id         String            @id @default(cuid())
   name       String
   userId     String?
-  user       User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
-  platform   AnalyticsPlatform  @default(SERVER)
+  user       User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  platform   AnalyticsPlatform @default(SERVER)
   appVersion String?
-  occurredAt DateTime           @default(now())
-  props      Json               @default("{}")
-  createdAt  DateTime           @default(now())
+  occurredAt DateTime          @default(now())
+  props      Json              @default("{}")
+  createdAt  DateTime          @default(now())
 
   @@index([name, occurredAt])
   @@index([userId, occurredAt])
@@ -637,11 +639,220 @@ model AnalyticsDailyMetric {
   @@map("analytics_daily_metrics")
 }
 
-/** Key-value app config (e.g. Yandex Metrika counter). */
+/**
+ * Key-value app config (e.g. Yandex Metrika counter).
+ */
 model AppSetting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
 
   @@map("app_settings")
+}
+
+enum MarketingLandingStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/**
+ * Editable landing and its immutable published snapshots.
+ */
+model MarketingLanding {
+  id                 String                    @id @default(cuid())
+  name               String
+  slug               String                    @unique
+  description        String?
+  status             MarketingLandingStatus    @default(DRAFT)
+  draftContent       Json                      @default("{}")
+  draftSeo           Json                      @default("{}")
+  publishedVersionId String?                   @unique
+  publishedVersion   MarketingLandingVersion?  @relation("MarketingLandingPublishedVersion", fields: [publishedVersionId], references: [id], onDelete: SetNull)
+  versions           MarketingLandingVersion[] @relation("MarketingLandingVersions")
+  campaignVariants   MarketingCampaignVariant[]
+  attributionTouches MarketingAttributionTouch[]
+  conversions        MarketingConversion[]
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  publishedAt        DateTime?
+
+  @@index([status, publishedAt])
+  @@map("marketing_landings")
+}
+
+/**
+ * A frozen content/SEO snapshot created only by publishing a landing.
+ */
+model MarketingLandingVersion {
+  id           String            @id @default(cuid())
+  landingId    String
+  landing      MarketingLanding  @relation("MarketingLandingVersions", fields: [landingId], references: [id], onDelete: Cascade)
+  version      Int
+  content      Json
+  seo          Json              @default("{}")
+  createdAt    DateTime          @default(now())
+  publishedAt  DateTime?
+  publishedFor MarketingLanding? @relation("MarketingLandingPublishedVersion")
+
+  @@unique([landingId, version])
+  @@index([landingId, publishedAt])
+  @@map("marketing_landing_versions")
+}
+
+enum MarketingCampaignPlatform {
+  YANDEX_DIRECT
+  TELEGRAM
+  TIKTOK
+  OTHER
+}
+enum MarketingCampaignStatus {
+  DRAFT
+  READY
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+enum MarketingExpenseSource {
+  MANUAL
+  YANDEX_DIRECT_API
+}
+
+model MarketingCampaign {
+  id String @id @default(cuid())
+  name String
+  description String?
+  platform MarketingCampaignPlatform @default(OTHER)
+  status MarketingCampaignStatus @default(DRAFT)
+  objective String?
+  plannedBudget Decimal? @db.Decimal(14, 2)
+  currency String @default("RUB") @db.VarChar(3)
+  externalCampaignId String?
+  startsAt DateTime?
+  endsAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  variants MarketingCampaignVariant[]
+  expenses MarketingExpense[]
+  attributionTouches MarketingAttributionTouch[]
+  conversions MarketingConversion[]
+  @@index([status, startsAt])
+  @@map("marketing_campaigns")
+}
+
+model MarketingCampaignVariant {
+  id String @id @default(cuid())
+  campaignId String
+  landingId String
+  name String
+  utmSource String
+  utmMedium String
+  utmCampaign String
+  utmContent String?
+  utmTerm String?
+  utmId String?
+  isActive Boolean @default(true)
+  campaign MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  landing MarketingLanding @relation(fields: [landingId], references: [id], onDelete: Restrict)
+  attributionTouches MarketingAttributionTouch[]
+  conversions MarketingConversion[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([campaignId, isActive])
+  @@index([landingId])
+  @@map("marketing_campaign_variants")
+}
+
+model MarketingExpense {
+  id String @id @default(cuid())
+  campaignId String
+  externalRecordId String?
+  amount Decimal @db.Decimal(14, 2)
+  currency String @default("RUB") @db.VarChar(3)
+  source MarketingExpenseSource @default(MANUAL)
+  comment String?
+  occurredAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  campaign MarketingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  @@unique([campaignId, externalRecordId])
+  @@index([campaignId, occurredAt])
+  @@map("marketing_expenses")
+}
+
+/**
+ * An immutable marketing touch. It is intentionally separate from analytics
+ * events so attribution can remain queryable after analytics retention or
+ * campaign configuration changes.
+ */
+model MarketingAttributionTouch {
+  id          String  @id @default(cuid())
+  anonymousId String  @db.Uuid
+  userId      String?
+  campaignId  String?
+  variantId   String?
+  landingId   String?
+
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  utmContent  String?
+  utmTerm     String?
+  utmId       String?
+  yclid       String?
+  referrer    String?
+  occurredAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  user     User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  campaign MarketingCampaign?       @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  variant  MarketingCampaignVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  landing  MarketingLanding?        @relation(fields: [landingId], references: [id], onDelete: SetNull)
+  conversions MarketingConversion[]
+
+  @@index([anonymousId, occurredAt])
+  @@index([userId, occurredAt])
+  @@index([campaignId, occurredAt])
+  @@index([variantId, occurredAt])
+  @@map("marketing_attribution_touches")
+}
+
+enum MarketingConversionType {
+  LANDING_VIEW
+  CTA_CLICK
+  REGISTRATION_STARTED
+  REGISTRATION_COMPLETED
+  PROFILE_CREATED
+  GAME_PUBLISHED
+  APPLICATION_SENT
+  APPLICATION_APPROVED
+  MATCH_COMPLETED
+}
+
+model MarketingConversion {
+  id               String                @id @default(cuid())
+  type             MarketingConversionType
+  anonymousId      String?               @db.Uuid
+  userId           String?
+  campaignId       String?
+  variantId        String?
+  landingId        String?
+  touchId          String?
+  attributionModel String
+  idempotencyKey   String                @unique
+  occurredAt       DateTime              @default(now())
+  createdAt        DateTime              @default(now())
+  props            Json                  @default("{}")
+
+  user    User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  campaign MarketingCampaign?      @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  variant MarketingCampaignVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  landing MarketingLanding?        @relation(fields: [landingId], references: [id], onDelete: SetNull)
+  touch   MarketingAttributionTouch? @relation(fields: [touchId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId, type, occurredAt])
+  @@index([userId, type, occurredAt])
+  @@index([anonymousId, type, occurredAt])
+  @@map("marketing_conversions")
 }
