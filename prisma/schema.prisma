@@ -970,3 +970,20 @@ model MarketingConversion {
   @@index([anonymousId, type, occurredAt])
   @@map("marketing_conversions")
 }
+
+model Partner {
+  id        String   @id @default(cuid())
+  name      String
+  href      String
+  /// Короткий текст на плашке, если нет logoUrl
+  mark      String   @default("")
+  accent    String   @default("#157AFE")
+  logoUrl   String?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+  @@map("partners")
+}

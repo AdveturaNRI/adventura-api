@@ -14,6 +14,7 @@ import { MailModule } from './mail/mail.module';
 import { MarketingModule } from './marketing/marketing.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { NotificationSoundsModule } from './notification-sounds/notification-sounds.module';
+import { PartnersModule } from './partners/partners.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PushSubscriptionsModule } from './push-subscriptions/push-subscriptions.module';
 import { RealtimeModule } from './realtime/realtime.module';
@@ -42,6 +43,7 @@ import { UsersModule } from './users/users.module';
     ChatsModule,
     NotificationsModule,
     NotificationSoundsModule,
+    PartnersModule,
     PushSubscriptionsModule,
     GamesModule,
     ClubsModule,

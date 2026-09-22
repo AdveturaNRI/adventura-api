@@ -2423,7 +2423,11 @@ export class ChatsService {
     return { ok: true as const };
   }
 
-  /** Leave the call. Ends for everyone when the room is empty. */
+  /**
+   * Leave the call.
+   * Direct (1:1): anyone hanging up ends the call for both — next "Позвонить" is a fresh invite.
+   * Group: room stays up until empty; last person keeps a short lobby for rejoin.
+   */
   async endVoiceCall(userId: string, conversationId: string, callId: string) {
     await this.assertParticipant(userId, conversationId);
     const call = this.activeVoiceCalls.get(callId);
@@ -2454,8 +2458,10 @@ export class ChatsService {
       call.joinedUserIds = call.joinedUserIds.filter((id) => id !== userId);
     }
 
-    // Room empty — end for everyone (direct and group).
-    if (call.joinedUserIds.length === 0) {
+    // Empty room, or 1:1 hangup while the peer was still in — end for everyone.
+    const endForEveryone =
+      call.joinedUserIds.length === 0 || (!call.isGroup && inJoined);
+    if (endForEveryone) {
       const ringingLeft = [...call.ringingUserIds];
       this.clearVoiceCallTimers(call);
       this.activeVoiceCalls.delete(callId);
@@ -2487,7 +2493,7 @@ export class ChatsService {
       this.clearVoiceCallRingTimer(call);
     }
 
-    // Someone left — remaining people keep the lobby (incl. 1:1 solo wait).
+    // Group: someone left — remaining people keep the lobby.
     if (call.joinedUserIds.length === 1) {
       this.clearVoiceCallWaitTimer(call);
       call.waitTimer = setTimeout(() => {
