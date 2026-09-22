@@ -27,6 +27,8 @@ import {
   GRANTABLE_AURA_IDS,
   GRANTABLE_AVATAR_FRAME_IDS,
   GRANTABLE_DICE_SKIN_IDS,
+  UNIQUE_AURA_IDS,
+  UNIQUE_AVATAR_FRAME_IDS,
   WILDCARD_AURA_IDS,
   WILDCARD_AVATAR_FRAME_IDS,
   WILDCARD_DICE_SKIN_IDS,
@@ -185,22 +187,42 @@ function defaultCosmeticFromBadges(
   return null;
 }
 
+function firstOwnedCosmetic(
+  owned: Set<string>,
+  preferredOrder: readonly string[],
+): string | null {
+  for (const id of preferredOrder) {
+    if (owned.has(id)) {
+      return id;
+    }
+  }
+  for (const id of owned) {
+    return id;
+  }
+  return null;
+}
+
 /**
- * Explicit `none` stays off. Empty/unknown equipped → best owned badge cosmetic.
+ * Explicit `none` stays off (returned as `none`).
+ * Empty/unknown equipped → best owned cosmetic (badge mapping first, then any owned unlock).
  */
 function resolveEquipped(
   equipped: string | null | undefined,
   owned: Set<string>,
   badges: RewardBadgeTypeId[],
   byBadge: Record<RewardBadgeTypeId, string | null>,
+  preferredOrder: readonly string[],
 ): string | null {
   if (equipped === COSMETIC_OFF) {
-    return null;
+    return COSMETIC_OFF;
   }
   if (equipped && owned.has(equipped)) {
     return equipped;
   }
-  return defaultCosmeticFromBadges(badges, owned, byBadge);
+  return (
+    defaultCosmeticFromBadges(badges, owned, byBadge) ??
+    firstOwnedCosmetic(owned, preferredOrder)
+  );
 }
 
 function parseStoredBadgeTypes(value: unknown): string[] | null {
@@ -257,15 +279,18 @@ export class RewardsService {
     const frames = ownedFrameIds(badges, cosmetics.unlocks);
     const auras = ownedAuraIds(badges, cosmetics.unlocks);
     const data: {
-      equippedAvatarFrameId?: string;
-      equippedQuestionnaireAuraId?: string;
+      equippedAvatarFrameId?: string | null;
+      equippedQuestionnaireAuraId?: string | null;
       visibleBadgeTypes?: RewardBadgeTypeId[];
     } = {};
 
     if (dto.avatarFrameId !== undefined) {
       const value = dto.avatarFrameId;
-      if (value === null || value === COSMETIC_OFF) {
+      if (value === COSMETIC_OFF) {
         data.equippedAvatarFrameId = COSMETIC_OFF;
+      } else if (value === null) {
+        // Clear back to auto-equip from owned cosmetics.
+        data.equippedAvatarFrameId = null;
       } else if (frames.has(value)) {
         data.equippedAvatarFrameId = value;
       } else {
@@ -275,8 +300,10 @@ export class RewardsService {
 
     if (dto.questionnaireAuraId !== undefined) {
       const value = dto.questionnaireAuraId;
-      if (value === null || value === COSMETIC_OFF) {
+      if (value === COSMETIC_OFF) {
         data.equippedQuestionnaireAuraId = COSMETIC_OFF;
+      } else if (value === null) {
+        data.equippedQuestionnaireAuraId = null;
       } else if (auras.has(value)) {
         data.equippedQuestionnaireAuraId = value;
       } else {
@@ -401,6 +428,7 @@ export class RewardsService {
           ownedFrameIds(badges, userUnlocks),
           badges,
           FRAME_BY_BADGE,
+          UNIQUE_AVATAR_FRAME_IDS,
         ),
       });
     }
@@ -436,12 +464,14 @@ export class RewardsService {
         frames,
         badges,
         FRAME_BY_BADGE,
+        UNIQUE_AVATAR_FRAME_IDS,
       ),
       questionnaireAuraId: resolveEquipped(
         equipped?.equippedQuestionnaireAuraId,
         auras,
         badges,
         AURA_BY_BADGE,
+        UNIQUE_AURA_IDS,
       ),
       visibleBadges: resolveVisibleBadges(badges, parseStoredBadgeTypes(equipped?.visibleBadgeTypes)),
       ownedFrameIds: GRANTABLE_AVATAR_FRAME_IDS.filter((id) => frames.has(id)),
