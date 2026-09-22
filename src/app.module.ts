@@ -5,6 +5,7 @@ import { AppSettingsModule } from './app-settings/app-settings.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AuthModule } from './auth/auth.module';
 import { ArtStudioModule } from './art-studio/art-studio.module';
+import { AuthorsModule } from './authors/authors.module';
 import { ChatsModule } from './chats/chats.module';
 import { ClubsModule } from './clubs/clubs.module';
 import { GamesModule } from './games/games.module';
@@ -44,6 +45,7 @@ import { UsersModule } from './users/users.module';
     PushSubscriptionsModule,
     GamesModule,
     ClubsModule,
+    AuthorsModule,
     ArtStudioModule,
   ],
 })
