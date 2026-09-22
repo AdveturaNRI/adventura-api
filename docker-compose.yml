@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: adventura-postgres
     restart: unless-stopped
     ports:
@@ -94,6 +94,11 @@ services:
       FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
       FIREBASE_SERVICE_ACCOUNT_PATH: ${FIREBASE_SERVICE_ACCOUNT_PATH:-}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-adventu-1ee37}
+      VK_APP_ID: ${VK_APP_ID:-}
+      VK_SERVICE_TOKEN: ${VK_SERVICE_TOKEN:-}
+      VK_API_VERSION: ${VK_API_VERSION:-5.199}
+      YANDEX_CLIENT_ID: ${YANDEX_CLIENT_ID:-}
+      YANDEX_CLIENT_SECRET: ${YANDEX_CLIENT_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy

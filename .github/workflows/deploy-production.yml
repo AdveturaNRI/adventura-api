@@ -88,11 +88,15 @@ jobs:
           deploy_port="${DEPLOY_PORT:-22}"
           image="${IMAGE_NAME}@${IMAGE_DIGEST}"
 
+          # Keepalive: long migrate/api updates otherwise die with "Broken pipe" (exit 255).
           sshpass -e ssh -p "$deploy_port" \
             -o PreferredAuthentications=password \
             -o PubkeyAuthentication=no \
             -o HostKeyAlias=adventura-deploy \
             -o StrictHostKeyChecking=yes \
+            -o TCPKeepAlive=yes \
+            -o ServerAliveInterval=20 \
+            -o ServerAliveCountMax=90 \
             "$DEPLOY_USER@$DEPLOY_HOST" sh -s -- "$image" "$SWARM_SERVICE" <<'REMOTE'
           set -eu
 
@@ -112,9 +116,12 @@ jobs:
           docker service update --detach=true --with-registry-auth --force \
             --image "$image" "$migration_service"
 
-          deadline=$(( $(date +%s) + 300 ))
+          deadline=$(( $(date +%s) + 600 ))
           while :; do
-            task_state="$(docker service ps --no-trunc --format '{{.CurrentState}}' "$migration_service" | head -n 1)"
+            # Prefer the newest task; ignore older Complete rows when force-updating.
+            task_line="$(docker service ps --no-trunc --format '{{.ID}} {{.CurrentState}}' "$migration_service" | head -n 1)"
+            task_state="$(printf '%s\n' "$task_line" | awk '{ $1=""; sub(/^ /,""); print }')"
+            echo "migrate: $task_state"
             case "$task_state" in
               Complete*)
                 echo "Migrations completed successfully"
@@ -122,14 +129,14 @@ jobs:
                 ;;
               Failed*|Rejected*)
                 echo "Migration task failed: $task_state" >&2
-                docker service logs --tail 100 "$migration_service" >&2 || true
+                docker service logs --tail 120 "$migration_service" >&2 || true
                 exit 1
                 ;;
             esac
 
             if [ "$(date +%s)" -ge "$deadline" ]; then
               echo "Timed out waiting for migration task: $task_state" >&2
-              docker service logs --tail 100 "$migration_service" >&2 || true
+              docker service logs --tail 120 "$migration_service" >&2 || true
               exit 1
             fi
 
@@ -137,6 +144,38 @@ jobs:
           done
 
           echo "Updating API service: $api_service"
-          docker service update --detach=false --with-registry-auth \
+          # Detach + poll: holding SSH on --detach=false through a long rolling
+          # update is what usually triggers Broken pipe on small VPSes.
+          docker service update --detach=true --with-registry-auth \
             --image "$image" "$api_service"
+
+          api_deadline=$(( $(date +%s) + 600 ))
+          while :; do
+            api_state="$(docker service ps --no-trunc --format '{{.CurrentState}}' "$api_service" | head -n 1)"
+            echo "api: $api_state"
+            case "$api_state" in
+              Running*)
+                # Give healthcheck a moment after Running appears.
+                sleep 8
+                api_state2="$(docker service ps --no-trunc --format '{{.CurrentState}}' "$api_service" | head -n 1)"
+                case "$api_state2" in
+                  Running*)
+                    echo "API service is running"
+                    exit 0
+                    ;;
+                esac
+                ;;
+              Failed*|Rejected*|Complete*)
+                echo "API update ended badly: $api_state" >&2
+                docker service logs --tail 120 "$api_service" >&2 || true
+                exit 1
+                ;;
+            esac
+            if [ "$(date +%s)" -ge "$api_deadline" ]; then
+              echo "Timed out waiting for API update: $api_state" >&2
+              docker service ps --no-trunc "$api_service" >&2 || true
+              exit 1
+            fi
+            sleep 5
+          done
           REMOTE

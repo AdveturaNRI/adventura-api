@@ -23,7 +23,11 @@ import { NicknameService } from '../nickname/nickname.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
-import { AuthResponse, AuthUser } from './types/auth-response.type';
+import {
+  AuthResponse,
+  AuthUser,
+  LinkedOAuthProvider,
+} from './types/auth-response.type';
 
 const SALT_ROUNDS = 10;
 const EMAIL_TOKEN_TTL_MS = 60 * 60 * 1000;
@@ -251,6 +255,45 @@ export class AuthService {
 
   getProfile(user: AuthUser): AuthUser {
     return user;
+  }
+
+  async getProfileWithLinks(userId: string): Promise<AuthUser> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        ...USER_SELECT,
+        oauthAccounts: { select: { provider: true } },
+      },
+    });
+    if (!user) {
+      throw new UnauthorizedException();
+    }
+    return this.toAuthUser(user, this.mapLinkedProviders(user.oauthAccounts));
+  }
+
+  async issueAuthResponse(userId: string): Promise<AuthResponse> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        ...USER_SELECT,
+        oauthAccounts: { select: { provider: true } },
+      },
+    });
+    if (!user) {
+      throw new UnauthorizedException();
+    }
+    return this.buildAuthResponse(
+      user,
+      this.mapLinkedProviders(user.oauthAccounts),
+    );
+  }
+
+  mapLinkedProviders(
+    accounts: Array<{ provider: 'VK' | 'YANDEX' }>,
+  ): LinkedOAuthProvider[] {
+    return accounts.map((row) =>
+      row.provider === 'VK' ? 'vk' : 'yandex',
+    );
   }
 
   async requestEmailVerification(user: AuthUser) {
@@ -515,18 +558,33 @@ export class AuthService {
       .replace(/"/g, '&quot;');
   }
 
-  private toAuthUser(user: UserRow): AuthUser {
+  private toAuthUser(
+    user: UserRow,
+    linkedProviders: LinkedOAuthProvider[] = [],
+  ): AuthUser {
     return {
       id: user.id,
       email: user.email,
       nickname: user.nickname,
       isGuest: user.isGuest,
       emailVerified: Boolean(user.emailVerifiedAt),
+      linkedProviders,
     };
   }
 
-  private async buildAuthResponse(user: UserRow): Promise<AuthResponse> {
-    const authUser = this.toAuthUser(user);
+  private async buildAuthResponse(
+    user: UserRow,
+    linkedProviders?: LinkedOAuthProvider[],
+  ): Promise<AuthResponse> {
+    const providers =
+      linkedProviders ??
+      this.mapLinkedProviders(
+        await this.prisma.oAuthAccount.findMany({
+          where: { userId: user.id },
+          select: { provider: true },
+        }),
+      );
+    const authUser = this.toAuthUser(user, providers);
     const accessToken = this.jwtService.sign({
       sub: authUser.id,
       email: authUser.email,

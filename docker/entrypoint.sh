@@ -28,6 +28,10 @@ load_secret_file S3_SECRET_ACCESS_KEY
 load_secret_file SMTP_PASS
 load_secret_file LIVEKIT_API_KEY
 load_secret_file LIVEKIT_API_SECRET
+load_secret_file YANDEX_CLIENT_ID
+load_secret_file YANDEX_CLIENT_SECRET
+load_secret_file VK_APP_ID
+load_secret_file VK_SERVICE_TOKEN
 
 # Prisma 6 reads a connection URL from its schema. Deployment supplies the
 # connection pieces separately; construct the URL only in this process.

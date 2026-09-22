@@ -39,6 +39,10 @@ storage provider. These are not generated with `openssl`.
 printf %s '<S3_ACCESS_KEY_ID>' | docker secret create adventura_s3_access_key_id -
 printf %s '<S3_SECRET_ACCESS_KEY>' | docker secret create adventura_s3_secret_access_key -
 printf %s '<SMTP_PASS>' | docker secret create adventura_smtp_pass -
+printf %s '<YANDEX_CLIENT_ID>' | docker secret create adventura_yandex_client_id -
+printf %s '<YANDEX_CLIENT_SECRET>' | docker secret create adventura_yandex_client_secret -
+printf %s '<VK_APP_ID>' | docker secret create adventura_vk_app_id -
+printf %s '<VK_SERVICE_TOKEN>' | docker secret create adventura_vk_service_token -
 ```
 
 ## 3. Set non-secret deployment variables
@@ -72,6 +76,15 @@ SMTP_USER: notification@adventu.ru
 SMTP_FROM: Adventura <notification@adventu.ru>
 SMTP_PASS_FILE: /run/secrets/smtp_pass
 WEB_PUBLIC_URL: https://adventu.ru
+
+# Yandex ID (via Swarm secrets)
+YANDEX_CLIENT_ID_FILE: /run/secrets/yandex_client_id
+YANDEX_CLIENT_SECRET_FILE: /run/secrets/yandex_client_secret
+
+# VK ID (via Swarm secrets)
+VK_APP_ID_FILE: /run/secrets/vk_app_id
+VK_SERVICE_TOKEN_FILE: /run/secrets/vk_service_token
+VK_API_VERSION: "5.199"
 ```
 
 Attach these secrets to the `api` service:
@@ -81,6 +94,10 @@ secrets:
   - s3_access_key_id
   - s3_secret_access_key
   - smtp_pass
+  - yandex_client_id
+  - yandex_client_secret
+  - vk_app_id
+  - vk_service_token
 ```
 
 Declare them at stack level:
@@ -96,6 +113,18 @@ secrets:
   smtp_pass:
     external: true
     name: adventura_smtp_pass
+  yandex_client_id:
+    external: true
+    name: adventura_yandex_client_id
+  yandex_client_secret:
+    external: true
+    name: adventura_yandex_client_secret
+  vk_app_id:
+    external: true
+    name: adventura_vk_app_id
+  vk_service_token:
+    external: true
+    name: adventura_vk_service_token
 ```
 
 ## 4. Deploy and verify

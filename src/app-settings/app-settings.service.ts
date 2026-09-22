@@ -96,6 +96,24 @@ export class AppSettingsService {
     private readonly config: ConfigService,
   ) {}
 
+  /** Public OAuth client ids for web SDK (no secrets). */
+  getOauthPublic() {
+    const vkAppId = this.config.get<string>('VK_APP_ID')?.trim() || '';
+    const yandexClientId =
+      this.config.get<string>('YANDEX_CLIENT_ID')?.trim() || '';
+
+    return {
+      vk: {
+        enabled: Boolean(vkAppId),
+        appId: vkAppId || null,
+      },
+      yandex: {
+        enabled: Boolean(yandexClientId),
+        clientId: yandexClientId || null,
+      },
+    };
+  }
+
   async getYandexMetrikaAdmin(): Promise<YandexMetrikaAdminSettings> {
     const rows = await this.prisma.appSetting.findMany({
       where: {

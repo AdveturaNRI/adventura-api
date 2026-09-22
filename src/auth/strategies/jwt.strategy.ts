@@ -39,6 +39,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         nickname: true,
         isGuest: true,
         emailVerifiedAt: true,
+        oauthAccounts: { select: { provider: true } },
       },
     });
 
@@ -65,6 +66,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       nickname: user.nickname,
       isGuest: user.isGuest,
       emailVerified: Boolean(user.emailVerifiedAt),
+      linkedProviders: user.oauthAccounts.map((row) =>
+        row.provider === 'VK' ? 'vk' : 'yandex',
+      ),
     };
   }
 }
