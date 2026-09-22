@@ -66,6 +66,8 @@ model User {
   rewards                   UserReward[]
   cosmeticUnlocks           UserCosmeticUnlock[]
   analyticsEvents           AnalyticsEvent[]
+  authorProfile             AuthorProfile?
+  authorPostLikes           AuthorPostLike[]
 
   @@index([notificationSoundPresetId])
 }
@@ -698,4 +700,57 @@ model AppSetting {
   updatedAt DateTime @updatedAt
 
   @@map("app_settings")
+}
+
+model AuthorProfile {
+  id          String       @id @default(cuid())
+  userId      String       @unique
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  description String       @default("")
+  categories  String[]     @default([])
+  contacts    Json?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  posts       AuthorPost[]
+
+  @@map("author_profiles")
+}
+
+model AuthorPost {
+  id                   String           @id @default(cuid())
+  authorProfileId      String
+  authorProfile        AuthorProfile    @relation(fields: [authorProfileId], references: [id], onDelete: Cascade)
+  title                String
+  content              String           @default("")
+  category             String
+  views                Int              @default(0)
+  likesCount           Int              @default(0)
+  isForSale            Boolean          @default(false)
+  price                Float?
+  currency             String?
+  purchaseDescription  String?
+  purchaseUrl          String?
+  /// [{ id, name, size, type, index }] — метаданные файлов (не картинок)
+  filesMeta            Json?
+  deletedAt            DateTime?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  likes                AuthorPostLike[]
+
+  @@index([authorProfileId, deletedAt, createdAt])
+  @@index([category, deletedAt, createdAt])
+  @@index([deletedAt, createdAt])
+  @@map("author_posts")
+}
+
+model AuthorPostLike {
+  postId    String
+  userId    String
+  createdAt DateTime   @default(now())
+  post      AuthorPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([postId, userId])
+  @@index([userId])
+  @@map("author_post_likes")
 }
