@@ -1820,9 +1820,78 @@ export async function setupAdmin(
         options: {
           navigation: { name: 'Пользователи', icon: 'User' },
           titleProperty: 'nickname',
-          listProperties: ['id', 'email', 'nickname', 'isGuest', 'location', 'createdAt'],
+          sort: { sortBy: 'createdAt', direction: 'desc' },
+          listProperties: [
+            'id',
+            'email',
+            'nickname',
+            'isGuest',
+            'emailVerifiedAt',
+            'createdAt',
+          ],
+          filterProperties: [
+            'id',
+            'email',
+            'nickname',
+            'isGuest',
+            'emailVerifiedAt',
+            'createdAt',
+          ],
+          showProperties: [
+            'id',
+            'email',
+            'nickname',
+            'isGuest',
+            'emailVerifiedAt',
+            'location',
+            'timezone',
+            'createdAt',
+            'updatedAt',
+            'lastSeenAt',
+          ],
+          editProperties: [
+            'email',
+            'nickname',
+            'isGuest',
+            'emailVerifiedAt',
+            'location',
+            'timezone',
+            'isPublic',
+          ],
           properties: {
             passwordHash: {
+              isVisible: {
+                list: false,
+                show: false,
+                edit: false,
+                filter: false,
+              },
+            },
+            systems: {
+              isVisible: {
+                list: false,
+                show: false,
+                edit: false,
+                filter: false,
+              },
+            },
+            roles: {
+              isVisible: {
+                list: false,
+                show: false,
+                edit: false,
+                filter: false,
+              },
+            },
+            visibleBadgeTypes: {
+              isVisible: {
+                list: false,
+                show: false,
+                edit: false,
+                filter: false,
+              },
+            },
+            oauthAccounts: {
               isVisible: {
                 list: false,
                 show: false,
@@ -1833,26 +1902,39 @@ export async function setupAdmin(
             refreshTokens: {
               isVisible: {
                 list: false,
-                show: true,
+                show: false,
                 edit: false,
                 filter: false,
               },
             },
-            visibleBadgeTypes: {
+            emailTokens: {
               isVisible: {
                 list: false,
-                show: true,
+                show: false,
                 edit: false,
                 filter: false,
               },
             },
           },
           actions: {
+            new: { isAccessible: false, isVisible: false },
+            delete: {
+              isAccessible: true,
+              isVisible: true,
+              guard: 'Удалить пользователя безвозвратно? Связанные данные (oauth, токены, …) удалятся каскадом.',
+            },
+            bulkDelete: {
+              isAccessible: true,
+              isVisible: true,
+              guard: 'Удалить выбранных пользователей?',
+            },
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             search: {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               handler: async (request: any) => {
-                const query = String(request.params?.query ?? request.query?.query ?? '').trim();
+                const query = String(
+                  request.params?.query ?? request.query?.query ?? '',
+                ).trim();
                 const users = await searchUsers(prisma, query);
                 return { records: toUserSearchRecords(users) };
               },

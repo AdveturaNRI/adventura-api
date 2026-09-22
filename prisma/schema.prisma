@@ -68,8 +68,29 @@ model User {
   analyticsEvents            AnalyticsEvent[]
   marketingAttributionTouches MarketingAttributionTouch[]
   marketingConversions       MarketingConversion[]
+  oauthAccounts              OAuthAccount[]
 
   @@index([notificationSoundPresetId])
+}
+
+enum OAuthProvider {
+  VK
+  YANDEX
+}
+
+model OAuthAccount {
+  id             String        @id @default(cuid())
+  provider       OAuthProvider
+  providerUserId String
+  email          String?
+  linkedAt       DateTime      @default(now())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("oauth_accounts")
 }
 
 enum RewardBadgeType {
