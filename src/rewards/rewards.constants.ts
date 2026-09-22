@@ -108,6 +108,18 @@ export const AURA_BY_BADGE: Record<RewardBadgeTypeId, GrantableAuraId | null> = 
   tavern_keeper: 'oak_shield',
 };
 
+/**
+ * Highest → lowest for auto-equip when the user has not chosen a frame/aura.
+ * Хозяин таверны > Первый мастер > Первопроходец > Истребитель багов > Первая волна
+ */
+export const BADGE_DISPLAY_PRIORITY: RewardBadgeTypeId[] = [
+  'tavern_keeper',
+  'founding_dm',
+  'alpha_tester',
+  'bug_hunter',
+  'early_arrival',
+];
+
 export const UNIQUE_AVATAR_FRAME_IDS = [
   ...new Set(Object.values(FRAME_BY_BADGE).filter((id): id is GrantableAvatarFrameId => Boolean(id))),
 ];

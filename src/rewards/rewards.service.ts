@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import {
   ALL_COSMETIC_ITEM_ID,
   AURA_BY_BADGE,
+  BADGE_DISPLAY_PRIORITY,
   BADGE_GRANT_SPECS,
   BASE_CHARACTER_SLOTS,
   BASE_PORTRAIT_GENERATIONS_PER_DAY,
@@ -167,14 +168,39 @@ function ownedDiceSkinIds(
   return owned;
 }
 
-function resolveEquipped(equipped: string | null | undefined, owned: Set<string>): string | null {
+function defaultCosmeticFromBadges(
+  badges: RewardBadgeTypeId[],
+  owned: Set<string>,
+  byBadge: Record<RewardBadgeTypeId, string | null>,
+): string | null {
+  for (const badge of BADGE_DISPLAY_PRIORITY) {
+    if (!badges.includes(badge)) {
+      continue;
+    }
+    const id = byBadge[badge];
+    if (id && owned.has(id)) {
+      return id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Explicit `none` stays off. Empty/unknown equipped → best owned badge cosmetic.
+ */
+function resolveEquipped(
+  equipped: string | null | undefined,
+  owned: Set<string>,
+  badges: RewardBadgeTypeId[],
+  byBadge: Record<RewardBadgeTypeId, string | null>,
+): string | null {
   if (equipped === COSMETIC_OFF) {
     return null;
   }
   if (equipped && owned.has(equipped)) {
     return equipped;
   }
-  return null;
+  return defaultCosmeticFromBadges(badges, owned, byBadge);
 }
 
 function parseStoredBadgeTypes(value: unknown): string[] | null {
@@ -373,6 +399,8 @@ export class RewardsService {
         avatarFrameId: resolveEquipped(
           look?.equippedAvatarFrameId ?? null,
           ownedFrameIds(badges, userUnlocks),
+          badges,
+          FRAME_BY_BADGE,
         ),
       });
     }
@@ -406,10 +434,14 @@ export class RewardsService {
       avatarFrameId: resolveEquipped(
         equipped?.equippedAvatarFrameId,
         frames,
+        badges,
+        FRAME_BY_BADGE,
       ),
       questionnaireAuraId: resolveEquipped(
         equipped?.equippedQuestionnaireAuraId,
         auras,
+        badges,
+        AURA_BY_BADGE,
       ),
       visibleBadges: resolveVisibleBadges(badges, parseStoredBadgeTypes(equipped?.visibleBadgeTypes)),
       ownedFrameIds: GRANTABLE_AVATAR_FRAME_IDS.filter((id) => frames.has(id)),
