@@ -69,7 +69,7 @@ export class AuthorsService {
     private readonly rewardsService: RewardsService,
   ) {}
 
-  async listAuthors(viewerId: string): Promise<AuthorDto[]> {
+  async listAuthors(_viewerId: string | null): Promise<AuthorDto[]> {
     const profiles = await this.prisma.authorProfile.findMany({
       include: {
         user: { select: { id: true, nickname: true } },
@@ -90,7 +90,7 @@ export class AuthorsService {
     return this.toAuthorDto(profile);
   }
 
-  async getAuthor(viewerId: string, authorUserId: string): Promise<AuthorDto> {
+  async getAuthor(_viewerId: string | null, authorUserId: string): Promise<AuthorDto> {
     const profile = await this.prisma.authorProfile.findUnique({
       where: { userId: authorUserId },
       include: {
@@ -138,7 +138,7 @@ export class AuthorsService {
   }
 
   async listPosts(
-    viewerId: string,
+    viewerId: string | null,
     category?: string,
   ): Promise<AuthorPostDto[]> {
     const where: Prisma.AuthorPostWhereInput = { deletedAt: null };
@@ -167,7 +167,7 @@ export class AuthorsService {
   }
 
   async listAuthorPosts(
-    viewerId: string,
+    viewerId: string | null,
     authorUserId: string,
   ): Promise<AuthorPostDto[]> {
     const profile = await this.prisma.authorProfile.findUnique({
@@ -194,8 +194,11 @@ export class AuthorsService {
     );
   }
 
-  async getPost(viewerId: string, postId: string): Promise<AuthorPostDto> {
+  async getPost(viewerId: string | null, postId: string): Promise<AuthorPostDto> {
     const post = await this.requirePost(postId);
+    if (!viewerId) {
+      return this.toPostDto(post, false);
+    }
     const liked = await this.prisma.authorPostLike.findUnique({
       where: { postId_userId: { postId, userId: viewerId } },
       select: { postId: true },
@@ -525,10 +528,10 @@ export class AuthorsService {
   }
 
   private async getLikedPostIds(
-    viewerId: string,
+    viewerId: string | null,
     postIds: string[],
   ): Promise<Set<string>> {
-    if (postIds.length === 0) {
+    if (!viewerId || postIds.length === 0) {
       return new Set();
     }
     const likes = await this.prisma.authorPostLike.findMany({

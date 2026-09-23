@@ -67,6 +67,35 @@ export class MediaService {
   ): Promise<Media> {
     await this.deleteCollection(entity);
 
+    return this.writeRawFile(entity, buffer, mimeType, options);
+  }
+
+  /** Append a file without wiping the collection (multi-file libraries). */
+  async appendRawFile(
+    entity: MediaEntityRef,
+    buffer: Buffer,
+    mimeType: string,
+    options?: {
+      variant?: string;
+      fileName?: string;
+      durationSec?: number | null;
+      waveform?: Prisma.InputJsonValue | null;
+    },
+  ): Promise<Media> {
+    return this.writeRawFile(entity, buffer, mimeType, options);
+  }
+
+  private async writeRawFile(
+    entity: MediaEntityRef,
+    buffer: Buffer,
+    mimeType: string,
+    options?: {
+      variant?: string;
+      fileName?: string;
+      durationSec?: number | null;
+      waveform?: Prisma.InputJsonValue | null;
+    },
+  ): Promise<Media> {
     const variant = options?.variant ?? 'file';
     const extension = extensionFromMime(mimeType, options?.fileName);
     const key = [
@@ -99,6 +128,20 @@ export class MediaService {
     });
   }
 
+  async deleteEntityMedia(entityType: string, entityId: string): Promise<void> {
+    const existing = await this.prisma.media.findMany({
+      where: { entityType, entityId },
+    });
+
+    if (existing.length > 0) {
+      await this.s3.deleteObjects(existing.map((item) => item.path));
+    }
+
+    await this.prisma.media.deleteMany({
+      where: { entityType, entityId },
+    });
+  }
+
   async getCollection(entity: MediaEntityRef): Promise<Media[]> {
     return this.prisma.media.findMany({
       where: {
@@ -124,8 +167,8 @@ export class MediaService {
     }, {});
   }
 
-  async getPublicUrl(media: Media): Promise<string> {
-    return this.s3.getSignedObjectUrl(media.path);
+  async getPublicUrl(media: Media, expiresInSec?: number): Promise<string> {
+    return this.s3.getSignedObjectUrl(media.path, expiresInSec);
   }
 
   /** Copy all media rows for an entity onto another entity id (new S3 keys). */
