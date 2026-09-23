@@ -25,6 +25,7 @@ import { UpdateUserGameSystemDto } from './dto/update-user-game-system.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import {
   ListWanderersQueryDto,
+  SearchWanderersQueryDto,
   UpsertWandererReactionDto,
 } from './dto/wanderer-reaction.dto';
 import { UserGameSystemsService } from './user-game-systems.service';
@@ -49,6 +50,14 @@ export class UsersController {
   @Get('wanderers/counts')
   getWandererBucketCounts(@CurrentUser() user: AuthUser) {
     return this.usersService.getWandererBucketCounts(user.id);
+  }
+
+  @Get('wanderers/search')
+  searchWanderers(
+    @CurrentUser() user: AuthUser,
+    @Query() query: SearchWanderersQueryDto,
+  ) {
+    return this.usersService.searchWanderers(user.id, query.q);
   }
 
   @Put('wanderers/:targetUserId/reaction')

@@ -1,4 +1,4 @@
-import { IsIn, IsOptional } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export enum WandererReactionDtoType {
   FAVORITE = 'favorite',
@@ -21,4 +21,11 @@ export class ListWanderersQueryDto {
     message: 'bucket должен быть feed, favorites или skipped',
   })
   bucket?: WandererBucket = 'feed';
+}
+
+export class SearchWanderersQueryDto {
+  @IsString()
+  @MinLength(1, { message: 'Введите хотя бы один символ ника' })
+  @MaxLength(40)
+  q!: string;
 }

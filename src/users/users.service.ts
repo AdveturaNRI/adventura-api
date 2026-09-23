@@ -380,6 +380,63 @@ export class UsersService {
     ).filter((card): card is WandererCard => card !== null);
   }
 
+  async searchWanderers(viewerId: string, rawQuery: string): Promise<WandererCard[]> {
+    const q = rawQuery.trim();
+    if (q.length === 0) {
+      return [];
+    }
+
+    const blockRows = await this.prisma.userBlock.findMany({
+      where: { OR: [{ blockerId: viewerId }, { blockedId: viewerId }] },
+      select: { blockerId: true, blockedId: true },
+    });
+    const blockedByMeIds = new Set(
+      blockRows.filter((row) => row.blockerId === viewerId).map((row) => row.blockedId),
+    );
+    const blockedMeIds = new Set(
+      blockRows.filter((row) => row.blockedId === viewerId).map((row) => row.blockerId),
+    );
+    const excludeIds = [...new Set([viewerId, ...blockedByMeIds, ...blockedMeIds])];
+
+    const users = await this.prisma.user.findMany({
+      where: {
+        isPublic: true,
+        id: { notIn: excludeIds },
+        nickname: { contains: q, mode: 'insensitive' },
+      },
+      select: USER_PROFILE_SELECT,
+      orderBy: { nickname: 'asc' },
+      take: 30,
+    });
+
+    const reactions = await this.prisma.wandererReaction.findMany({
+      where: {
+        viewerId,
+        targetUserId: { in: users.map((user) => user.id) },
+      },
+      select: { targetUserId: true, type: true },
+    });
+    const reactionByTarget = new Map(
+      reactions.map((reaction) => [reaction.targetUserId, reaction.type]),
+    );
+
+    const cards = (
+      await Promise.all(
+        users.map((user) =>
+          this.toWandererCard(user, {
+            blockedByMe: blockedByMeIds.has(user.id),
+            includeIncomplete: true,
+          }),
+        ),
+      )
+    ).filter((card): card is WandererCard => card !== null);
+
+    return cards.map((card) => ({
+      ...card,
+      isFavorite: reactionByTarget.get(card.id) === WandererReactionType.FAVORITE,
+    }));
+  }
+
   async getWandererCard(
     viewerId: string,
     targetUserId: string,
