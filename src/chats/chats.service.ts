@@ -2311,11 +2311,14 @@ export class ChatsService {
     const call = this.requireVoiceCall(callId, conversationId);
 
     if (call.joinedUserIds.includes(userId)) {
-      return {
+      const signal = {
         callId: call.callId,
         conversationId: call.conversationId,
         byUserId: userId,
       };
+      // Idempotent re-accept: still nudge other devices that may be ringing.
+      this.realtime.emitCallAccepted([userId], signal);
+      return signal;
     }
 
     // Ring timed out or busy UI parked the invite — chat members may still late-join.
@@ -2338,9 +2341,9 @@ export class ChatsService {
       byUserId: userId,
     };
 
-    const notify = uniqueIds(
-      [...call.joinedUserIds, ...call.ringingUserIds].filter((id) => id !== userId),
-    );
+    // Include the accepter: their other devices still ring and must stop
+    // (client treats byUserId === me as "answered elsewhere").
+    const notify = uniqueIds([...call.joinedUserIds, ...call.ringingUserIds]);
     if (notify.length > 0) {
       this.realtime.emitCallAccepted(notify, signal);
     }
@@ -2361,11 +2364,13 @@ export class ChatsService {
     }
 
     if (call.joinedUserIds.includes(userId)) {
-      return {
+      const signal = {
         callId: call.callId,
         conversationId: call.conversationId,
         byUserId: userId,
       };
+      this.realtime.emitCallAccepted([userId], signal);
+      return signal;
     }
 
     call.ringingUserIds = call.ringingUserIds.filter((id) => id !== userId);
@@ -2382,9 +2387,8 @@ export class ChatsService {
       conversationId: call.conversationId,
       byUserId: userId,
     };
-    const notify = uniqueIds(
-      [...call.joinedUserIds, ...call.ringingUserIds].filter((id) => id !== userId),
-    );
+    // Include joiner so other devices of the same account dismiss the ring UI.
+    const notify = uniqueIds([...call.joinedUserIds, ...call.ringingUserIds]);
     if (notify.length > 0) {
       this.realtime.emitCallAccepted(notify, signal);
     }
@@ -2408,9 +2412,8 @@ export class ChatsService {
       byUserId: userId,
     };
 
-    const notifyDeclined = uniqueIds(
-      call.joinedUserIds.filter((id) => id !== userId),
-    );
+    // Joined peers + the decliner (other devices still ringing).
+    const notifyDeclined = uniqueIds([...call.joinedUserIds, userId]);
     if (notifyDeclined.length > 0) {
       this.realtime.emitCallDeclined(notifyDeclined, signal);
     }
@@ -2474,10 +2477,8 @@ export class ChatsService {
         // fall back to ringing only
       }
       if (notify.length > 0) {
-        this.realtime.emitCallEnded(
-          notify.filter((id) => id !== userId),
-          signal,
-        );
+        // Include the actor: other devices of the same account may still be ringing.
+        this.realtime.emitCallEnded(notify, signal);
       }
       if (aloneBeforeLeave) {
         try {
