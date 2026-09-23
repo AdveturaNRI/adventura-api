@@ -123,6 +123,27 @@ export function toUserSearchRecords(users: AdminUserHit[]) {
   }));
 }
 
+/**
+ * Hard-delete a user. Games must go before UserGameSystem (Restrict FK).
+ * Remaining relations cascade from User.
+ */
+export async function deleteUserCascade(prisma: PrismaService, userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, email: true, nickname: true },
+  });
+  if (!user) {
+    throw new Error('Пользователь не найден');
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // Owned games reference UserGameSystem with onDelete: Restrict — drop games first.
+    await tx.game.deleteMany({ where: { ownerId: userId } });
+    await tx.userGameSystem.deleteMany({ where: { userId } });
+    await tx.user.delete({ where: { id: userId } });
+  });
+}
+
 async function getUserState(rewards: RewardsService, userId: string) {
   const mine = await rewards.getMyRewards(userId);
   return {

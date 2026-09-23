@@ -54,8 +54,9 @@ export class MarketingFeedsService {
         const urls = coverMedia.length
           ? await this.media.getCollectionUrls(coverMedia)
           : {};
+        // Prefer display sizes — cardThumb is 128px and looks muddy on landing cards.
         const coverUrl =
-          urls.cardThumb ?? urls.card ?? urls.original ?? urls.medium ?? urls.large ?? null;
+          urls.card ?? urls.original ?? urls.large ?? urls.medium ?? urls.cardThumb ?? null;
 
         return {
           id: game.id,
@@ -110,7 +111,7 @@ export class MarketingFeedsService {
           ? await this.media.getCollectionUrls(coverMedia)
           : {};
         const coverUrl =
-          urls.cardThumb ?? urls.card ?? urls.original ?? urls.medium ?? urls.large ?? null;
+          urls.card ?? urls.original ?? urls.large ?? urls.medium ?? urls.cardThumb ?? null;
         return {
           id: club.id,
           name: club.name,
