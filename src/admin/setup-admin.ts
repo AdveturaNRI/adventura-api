@@ -27,6 +27,7 @@ import { MarketingCampaignsService } from '../marketing/campaigns/marketing-camp
 import { MarketingAnalyticsService } from '../marketing/analytics/marketing-analytics.service';
 import {
   createGrantRewardsPageHandler,
+  deleteUserCascade,
   handleGrantRewardRecordCreate,
   handleUnlockCosmeticRecordCreate,
   searchUsers,
@@ -1867,6 +1868,23 @@ export async function setupAdmin(
                 filter: false,
               },
             },
+            // Belongs-to without AdminJS resource → list/show 500 (populator).
+            notificationSoundPreset: {
+              isVisible: {
+                list: false,
+                show: false,
+                edit: false,
+                filter: false,
+              },
+            },
+            notificationSoundPresetId: {
+              isVisible: {
+                list: false,
+                show: false,
+                edit: false,
+                filter: false,
+              },
+            },
             systems: {
               isVisible: {
                 list: false,
@@ -1921,12 +1939,83 @@ export async function setupAdmin(
             delete: {
               isAccessible: true,
               isVisible: true,
-              guard: 'Удалить пользователя безвозвратно? Связанные данные (oauth, токены, …) удалятся каскадом.',
+              guard:
+                'Удалить пользователя безвозвратно? Игры, чаты, oauth и связанные данные уйдут вместе с ним.',
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              handler: async (request: any, response: any, context: any) => {
+                const { record, currentAdmin, resource } = context;
+                if (!record) {
+                  return {
+                    record: record?.toJSON?.(currentAdmin),
+                    notice: {
+                      message: 'Пользователь не найден',
+                      type: 'error',
+                    },
+                  };
+                }
+                try {
+                  await deleteUserCascade(prisma, String(record.id()));
+                  return {
+                    record: record.toJSON(currentAdmin),
+                    redirectUrl: resource
+                      ? `/admin/resources/${resource.id()}`
+                      : '/admin/resources/User',
+                    notice: {
+                      message: 'Пользователь удалён',
+                      type: 'success',
+                    },
+                  };
+                } catch (error) {
+                  return {
+                    record: record.toJSON(currentAdmin),
+                    notice: {
+                      message:
+                        error instanceof Error
+                          ? error.message
+                          : 'Не удалось удалить пользователя',
+                      type: 'error',
+                    },
+                  };
+                }
+              },
             },
             bulkDelete: {
               isAccessible: true,
               isVisible: true,
-              guard: 'Удалить выбранных пользователей?',
+              guard: 'Удалить выбранных пользователей безвозвратно?',
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              handler: async (request: any, _response: any, context: any) => {
+                const { records = [], resource, currentAdmin } = context;
+                const errors: string[] = [];
+                let deleted = 0;
+                for (const record of records) {
+                  try {
+                    await deleteUserCascade(prisma, String(record.id()));
+                    deleted += 1;
+                  } catch (error) {
+                    errors.push(
+                      `${record.id()}: ${
+                        error instanceof Error ? error.message : String(error)
+                      }`,
+                    );
+                  }
+                }
+                return {
+                  records: records.map((r: { toJSON: (a: unknown) => unknown }) =>
+                    r.toJSON(currentAdmin),
+                  ),
+                  redirectUrl: resource
+                    ? `/admin/resources/${resource.id()}`
+                    : '/admin/resources/User',
+                  notice: {
+                    message:
+                      errors.length === 0
+                        ? `Удалено пользователей: ${deleted}`
+                        : `Удалено ${deleted}, ошибок: ${errors.length}. ${errors.slice(0, 3).join('; ')}`,
+                    type: errors.length === 0 ? 'success' : 'error',
+                  },
+                };
+              },
             },
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             search: {
@@ -1997,6 +2086,20 @@ export async function setupAdmin(
         options: {
           navigation: { name: 'Справочники', icon: 'Book' },
           listProperties: ['id', 'name', 'countryId', 'region', 'population', 'isActive'],
+        },
+      },
+      {
+        // Required so User.list can populate notificationSoundPresetId without 500.
+        resource: { model: getModelByName('NotificationSoundPreset'), client: prisma },
+        options: {
+          navigation: { name: 'Справочники', icon: 'Book' },
+          listProperties: ['slug', 'label', 'sortOrder', 'isDefault', 'isActive'],
+          actions: {
+            ...readOnlyActions,
+            // Custom UI page already manages presets; keep resource for references only.
+            list: { isAccessible: true },
+            show: { isAccessible: true },
+          },
         },
       },
       {

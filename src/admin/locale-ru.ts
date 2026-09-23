@@ -64,6 +64,7 @@ export const ADMIN_LOCALE_RU = {
     GameSystem: 'Системы',
     Country: 'Страны',
     City: 'Города',
+    NotificationSoundPreset: 'Пресеты звуков',
     UserStatus: 'Статусы игроков',
     UserExperience: 'Опыт игроков',
     UserReward: 'Награды',
