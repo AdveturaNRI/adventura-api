@@ -2,6 +2,7 @@ import {
   DeleteObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
+  PutBucketCorsCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -66,6 +67,35 @@ export class S3Service implements OnModuleInit {
     this.logger.log(
       `S3 ready → bucket=${this.bucket}, signedUrl=${this.signedUrlExpiresSec}s`,
     );
+    // Browser Bard volume uses WebAudio GainNode → needs CORS on GET (or a proxy).
+    void this.ensureBrowserCors();
+  }
+
+  /** Allow fetch() / MediaElement crossOrigin from any Adventura web origin. */
+  private async ensureBrowserCors() {
+    try {
+      await this.client.send(
+        new PutBucketCorsCommand({
+          Bucket: this.bucket,
+          CORSConfiguration: {
+            CORSRules: [
+              {
+                AllowedHeaders: ['*'],
+                AllowedMethods: ['GET', 'HEAD'],
+                AllowedOrigins: ['*'],
+                ExposeHeaders: ['Content-Length', 'Content-Type', 'ETag'],
+                MaxAgeSeconds: 86_400,
+              },
+            ],
+          },
+        }),
+      );
+      this.logger.log('S3 CORS ready (GET/HEAD *) for web music playback');
+    } catch (error) {
+      this.logger.warn(
+        `S3 CORS update skipped: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   async getSignedObjectUrl(key: string, expiresInSec?: number): Promise<string> {
