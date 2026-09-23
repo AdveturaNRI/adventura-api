@@ -78,6 +78,7 @@ export const ADMIN_LOCALE_RU = {
   pages: {
     grantRewards: 'Выдать награду',
     metrikaSettings: 'Яндекс Метрика',
+    vkAdsPixelSettings: 'VK Ads Pixel',
     notificationSounds: 'Звуки уведомлений',
     broadcasts: 'Массовые оповещения',
     pushSettings: 'Web Push / FCM',

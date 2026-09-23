@@ -6,6 +6,8 @@ import {
   APP_SETTING_KEYS,
   DEFAULT_YANDEX_METRIKA_SETTINGS,
   type FirebasePushAdminSettings,
+  type VkAdsPixelAdminSettings,
+  type VkAdsPixelPublicConfig,
   type YandexMetrikaAdminSettings,
   type YandexMetrikaPublicConfig,
 } from './app-settings.constants';
@@ -24,6 +26,15 @@ function normalizeCounterId(raw: string): string {
   }
   if (!/^\d+$/.test(trimmed)) {
     throw new Error('ID счётчика Метрики должен состоять только из цифр');
+  }
+  return trimmed;
+}
+
+function normalizeVkAdsPixelId(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  if (!/^\d{1,20}$/.test(trimmed)) {
+    throw new Error('ID пикселя VK Ads должен состоять только из цифр');
   }
   return trimmed;
 }
@@ -212,6 +223,36 @@ export class AppSettingsService {
     );
 
     return next;
+  }
+
+  async getVkAdsPixelAdmin(): Promise<VkAdsPixelAdminSettings> {
+    const row = await this.prisma.appSetting.findUnique({
+      where: { key: APP_SETTING_KEYS.VK_ADS_PIXEL_ID },
+    });
+    return { pixelId: row?.value?.trim() ?? '' };
+  }
+
+  async getVkAdsPixelPublic(): Promise<VkAdsPixelPublicConfig> {
+    const { pixelId } = await this.getVkAdsPixelAdmin();
+    return { pixelId: pixelId || null };
+  }
+
+  async saveVkAdsPixel(
+    input: Partial<VkAdsPixelAdminSettings>,
+  ): Promise<VkAdsPixelAdminSettings> {
+    const current = await this.getVkAdsPixelAdmin();
+    const pixelId =
+      input.pixelId === undefined
+        ? current.pixelId
+        : normalizeVkAdsPixelId(input.pixelId);
+
+    await this.prisma.appSetting.upsert({
+      where: { key: APP_SETTING_KEYS.VK_ADS_PIXEL_ID },
+      create: { key: APP_SETTING_KEYS.VK_ADS_PIXEL_ID, value: pixelId },
+      update: { value: pixelId },
+    });
+
+    return { pixelId };
   }
 
   /** DB override for Firebase Web Push certificate public key. */

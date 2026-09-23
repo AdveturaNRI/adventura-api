@@ -4,6 +4,7 @@ export const APP_SETTING_KEYS = {
   YANDEX_METRIKA_CLICKMAP: 'yandex_metrika_clickmap',
   YANDEX_METRIKA_TRACK_LINKS: 'yandex_metrika_track_links',
   YANDEX_METRIKA_ACCURATE_BOUNCE: 'yandex_metrika_accurate_bounce',
+  VK_ADS_PIXEL_ID: 'vk_ads_pixel_id',
   FIREBASE_WEB_VAPID_KEY: 'firebase_web_vapid_key',
   FIREBASE_PROJECT_ID: 'firebase_project_id',
   FIREBASE_SERVICE_ACCOUNT_JSON: 'firebase_service_account_json',
@@ -31,6 +32,14 @@ export const DEFAULT_YANDEX_METRIKA_SETTINGS: YandexMetrikaAdminSettings = {
   clickmap: true,
   trackLinks: true,
   accurateTrackBounce: true,
+};
+
+export type VkAdsPixelAdminSettings = {
+  pixelId: string;
+};
+
+export type VkAdsPixelPublicConfig = {
+  pixelId: string | null;
 };
 
 /** Admin form for FCM / Web Push. serviceAccountJson is write-only in UI. */
