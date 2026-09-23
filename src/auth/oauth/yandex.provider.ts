@@ -14,9 +14,22 @@ type YandexInfoResponse = {
   default_email?: string;
   emails?: string[];
   login?: string;
+  default_avatar_id?: string;
+  is_avatar_empty?: boolean;
   error?: string;
   error_description?: string;
 };
+
+function yandexAvatarUrl(
+  avatarId: string | undefined,
+  isEmpty: boolean | undefined,
+): string | null {
+  if (isEmpty || !avatarId?.trim() || avatarId.trim() === '0/0-0') {
+    return null;
+  }
+  // islands-200 ≈ 200px; pipeline downscales further into thumb/small/medium/large.
+  return `https://avatars.yandex.net/get-yapic/${avatarId.trim()}/islands-200`;
+}
 
 @Injectable()
 export class YandexOAuthProvider {
@@ -63,11 +76,22 @@ export class YandexOAuthProvider {
       payload.default_email?.trim().toLowerCase() ||
       payload.emails?.[0]?.trim().toLowerCase() ||
       null;
+    const avatarUrl = yandexAvatarUrl(
+      payload.default_avatar_id,
+      payload.is_avatar_empty,
+    );
+
+    if (!email) {
+      this.logger.warn(
+        `Yandex info without email for id=${payload.id} (check login:email scope)`,
+      );
+    }
 
     return {
       provider: OAuthProvider.YANDEX,
       providerUserId: String(payload.id),
       email,
+      avatarUrl,
     };
   }
 }

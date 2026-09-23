@@ -171,6 +171,11 @@ export class MediaService {
     return this.s3.getSignedObjectUrl(media.path, expiresInSec);
   }
 
+  /** Read a public asset through the API when a browser cannot reach S3 directly. */
+  async getObjectBuffer(media: Media): Promise<Buffer> {
+    return this.s3.getObjectBuffer(media.path);
+  }
+
   /** Copy all media rows for an entity onto another entity id (new S3 keys). */
   async copyEntityMedia(
     from: { entityType: string; entityId: string },

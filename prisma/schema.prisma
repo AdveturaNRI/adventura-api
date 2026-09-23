@@ -925,6 +925,7 @@ model MarketingExpense {
  */
 model MarketingAttributionTouch {
   id          String   @id @default(cuid())
+  idempotencyKey String? @unique
   anonymousId String   @db.Uuid
   userId      String?
   campaignId  String?

@@ -25,8 +25,8 @@ export class RecordMarketingConversionDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(32)
-  @Matches(/^[a-z0-9]+$/i, { message: 'Некорректный вариант кампании' })
+  @MaxLength(64)
+  @Matches(/^[a-z0-9_-]+$/i, { message: 'Некорректный вариант кампании' })
   variantId?: string;
 
   @IsOptional()
@@ -39,11 +39,12 @@ export class RecordMarketingConversionDto {
 
   @IsString({ message: 'Некорректный ключ идемпотентности' })
   @MaxLength(160, { message: 'Слишком длинный ключ идемпотентности' })
-  @Matches(/^[A-Za-z0-9:_\-./]+$/, { message: 'Некорректный ключ идемпотентности' })
+  @Matches(/^[A-Za-z0-9:_\-./]+$/, {
+    message: 'Некорректный ключ идемпотентности',
+  })
   idempotencyKey!: string;
 
   @IsOptional()
   @IsObject({ message: 'props должен быть объектом' })
   props?: Record<string, unknown>;
 }
-

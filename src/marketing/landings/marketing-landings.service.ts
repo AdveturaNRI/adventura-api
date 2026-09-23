@@ -277,6 +277,19 @@ export class MarketingLandingsService {
   }
 
   async getAssetUrl(assetId: string): Promise<string> {
+    const asset = await this.findAsset(assetId);
+    return this.media.getPublicUrl(asset);
+  }
+
+  async getAsset(assetId: string): Promise<{ body: Buffer; contentType: string }> {
+    const asset = await this.findAsset(assetId);
+    return {
+      body: await this.media.getObjectBuffer(asset),
+      contentType: asset.mimeType,
+    };
+  }
+
+  private async findAsset(assetId: string) {
     if (!/^[0-9a-f-]{36}$/i.test(assetId)) {
       throw new NotFoundException('Изображение не найдено');
     }
@@ -287,7 +300,7 @@ export class MarketingLandingsService {
     });
     const asset = media.find((item) => item.variant === 'card') ?? media.find((item) => item.variant === 'original') ?? media[0];
     if (!asset) throw new NotFoundException('Изображение не найдено');
-    return this.media.getPublicUrl(asset);
+    return asset;
   }
 
   private async hydrateLandingAssetUrls(content: unknown): Promise<unknown> {
@@ -295,7 +308,11 @@ export class MarketingLandingsService {
     const visit = async (value: unknown): Promise<unknown> => {
       if (typeof value === 'string' && value.startsWith(ASSET_URL_PREFIX)) {
         const assetId = value.slice(ASSET_URL_PREFIX.length);
-        if (!cache.has(assetId)) cache.set(assetId, await this.getAssetUrl(assetId));
+        // Keep a stable same-origin API URL in the landing JSON. The asset
+        // endpoint creates a fresh signed S3 redirect for every image request;
+        // embedding a signed S3 URL here can leave mobile visitors with an
+        // expired URL after the landing response has been cached.
+        if (!cache.has(assetId)) cache.set(assetId, this.publicAssetUrl(assetId));
         return cache.get(assetId) ?? value;
       }
       if (Array.isArray(value)) return Promise.all(value.map(visit));
@@ -307,6 +324,13 @@ export class MarketingLandingsService {
       return value;
     };
     return visit(content);
+  }
+
+  private publicAssetUrl(assetId: string): string {
+    const configured = (process.env.PUBLIC_URL ?? '').trim().replace(/\/$/, '');
+    if (!configured) return `${ASSET_URL_PREFIX}${assetId}`;
+    const apiBase = configured.endsWith('/api') ? configured : `${configured}/api`;
+    return `${apiBase}${ASSET_URL_PREFIX}${assetId}`;
   }
 
   private async getLanding(id: string) {

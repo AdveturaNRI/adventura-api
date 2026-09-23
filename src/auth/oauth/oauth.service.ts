@@ -14,8 +14,10 @@ import * as bcrypt from 'bcrypt';
 
 import { ANALYTICS_EVENTS } from '../../analytics/analytics.constants';
 import { AnalyticsService } from '../../analytics/analytics.service';
+import { ImageProcessorService } from '../../image/image-processor.service';
 import { MarketingAttributionService } from '../../marketing/attribution/marketing-attribution.service';
 import { MarketingConversionsService } from '../../marketing/conversions/marketing-conversions.service';
+import { MediaService } from '../../media/media.service';
 import { NicknameService } from '../../nickname/nickname.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from '../auth.service';
@@ -25,11 +27,16 @@ import type {
   OAuthIdentity,
   OAuthLoginMeta,
 } from './oauth.types';
+import { SYNTHETIC_OAUTH_EMAIL_RE } from './oauth.types';
 import { VkOAuthProvider } from './vk.provider';
 import { YandexOAuthProvider } from './yandex.provider';
 
 const SALT_ROUNDS = 10;
 const GUEST_EMAIL_RE = /^guest_[a-f0-9]+@guest\.adventura$/i;
+const USER_ENTITY_TYPE = 'User';
+const AVATAR_COLLECTION = 'avatar';
+const PROFILE_CARD_COLLECTION = 'profileCard';
+const MAX_OAUTH_AVATAR_BYTES = 8 * 1024 * 1024;
 
 const USER_SELECT = {
   id: true,
@@ -38,6 +45,10 @@ const USER_SELECT = {
   isGuest: true,
   emailVerifiedAt: true,
 } as const;
+
+function isPlaceholderEmail(email: string) {
+  return GUEST_EMAIL_RE.test(email) || SYNTHETIC_OAUTH_EMAIL_RE.test(email);
+}
 
 @Injectable()
 export class OAuthService {
@@ -48,6 +59,8 @@ export class OAuthService {
     private readonly nicknameService: NicknameService,
     private readonly vk: VkOAuthProvider,
     private readonly yandex: YandexOAuthProvider,
+    private readonly mediaService: MediaService,
+    private readonly imageProcessor: ImageProcessorService,
     @Inject(forwardRef(() => AuthService))
     private readonly authService: AuthService,
     @Inject(forwardRef(() => AnalyticsService))
@@ -125,7 +138,7 @@ export class OAuthService {
     }
 
     const remainingProviders = accounts.length - 1;
-    const hasRealEmail = !GUEST_EMAIL_RE.test(dbUser.email);
+    const hasRealEmail = !isPlaceholderEmail(dbUser.email);
     const hasPasswordLogin = !dbUser.isGuest && hasRealEmail;
 
     if (remainingProviders === 0 && !hasPasswordLogin) {
@@ -157,6 +170,7 @@ export class OAuthService {
     });
 
     if (existingLink) {
+      void this.enrichExistingUser(existingLink.userId, existingLink.user.email, identity);
       this.analytics.track({
         name: ANALYTICS_EVENTS.USER_SESSION_STARTED,
         userId: existingLink.userId,
@@ -170,7 +184,10 @@ export class OAuthService {
     if (identity.email) {
       const byEmail = await this.prisma.user.findUnique({
         where: { email: identity.email },
-        select: { ...USER_SELECT, oauthAccounts: { select: { provider: true } } },
+        select: {
+          ...USER_SELECT,
+          oauthAccounts: { select: { provider: true } },
+        },
       });
 
       if (byEmail) {
@@ -204,6 +221,8 @@ export class OAuthService {
           });
         }
 
+        void this.importAvatarIfMissing(byEmail.id, identity.avatarUrl);
+
         this.analytics.track({
           name: ANALYTICS_EVENTS.USER_SESSION_STARTED,
           userId: byEmail.id,
@@ -219,6 +238,7 @@ export class OAuthService {
 
     const user = await this.createOAuthUser(identity);
     await this.recordRegistration(user.id, identity.provider, meta);
+    void this.importAvatarIfMissing(user.id, identity.avatarUrl);
 
     this.analytics.track({
       name: ANALYTICS_EVENTS.USER_SESSION_STARTED,
@@ -249,6 +269,7 @@ export class OAuthService {
     }
 
     if (taken && taken.userId === userId) {
+      void this.enrichExistingUser(userId, null, identity);
       return this.authService.getProfileWithLinks(userId);
     }
 
@@ -298,7 +319,7 @@ export class OAuthService {
           select: { id: true },
         });
         if (!emailOwner) {
-          if (GUEST_EMAIL_RE.test(user.email) || user.isGuest) {
+          if (isPlaceholderEmail(user.email) || user.isGuest) {
             patch.email = identity.email;
             patch.emailVerifiedAt = new Date();
           }
@@ -311,6 +332,8 @@ export class OAuthService {
         await tx.user.update({ where: { id: userId }, data: patch });
       }
     });
+
+    void this.importAvatarIfMissing(userId, identity.avatarUrl);
 
     return this.authService.getProfileWithLinks(userId);
   }
@@ -325,6 +348,12 @@ export class OAuthService {
     let email =
       identity.email ||
       `${identity.provider.toLowerCase()}_${identity.providerUserId}@oauth.adventura.local`;
+
+    if (!identity.email) {
+      this.logger.warn(
+        `Creating oauth user without provider email (${identity.provider}:${identity.providerUserId}) → ${email}`,
+      );
+    }
 
     const emailTaken = await this.prisma.user.findUnique({
       where: { email },
@@ -351,6 +380,173 @@ export class OAuthService {
       },
       select: USER_SELECT,
     });
+  }
+
+  /** On repeat login: fill real email / avatar if we previously stored placeholders. */
+  private async enrichExistingUser(
+    userId: string,
+    currentEmail: string | null,
+    identity: OAuthIdentity,
+  ) {
+    try {
+      const email =
+        currentEmail ??
+        (
+          await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { email: true },
+          })
+        )?.email;
+
+      if (identity.email && email && isPlaceholderEmail(email)) {
+        const owner = await this.prisma.user.findUnique({
+          where: { email: identity.email },
+          select: { id: true },
+        });
+        if (!owner) {
+          await this.prisma.user.update({
+            where: { id: userId },
+            data: {
+              email: identity.email,
+              emailVerifiedAt: new Date(),
+              isGuest: false,
+            },
+          });
+          await this.prisma.oAuthAccount.updateMany({
+            where: {
+              userId,
+              provider: identity.provider,
+              providerUserId: identity.providerUserId,
+            },
+            data: { email: identity.email },
+          });
+        }
+      }
+
+      await this.importAvatarIfMissing(userId, identity.avatarUrl);
+    } catch (error) {
+      this.logger.warn(
+        `OAuth enrich failed for ${userId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  private async importAvatarIfMissing(
+    userId: string,
+    avatarUrl: string | null,
+  ) {
+    if (!avatarUrl?.trim()) {
+      return;
+    }
+
+    try {
+      const existing = await this.mediaService.getCollection({
+        entityType: USER_ENTITY_TYPE,
+        entityId: userId,
+        collection: AVATAR_COLLECTION,
+      });
+      if (existing.length > 0) {
+        return;
+      }
+
+      const res = await fetch(avatarUrl.trim(), {
+        redirect: 'follow',
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (!res.ok) {
+        this.logger.warn(
+          `OAuth avatar fetch HTTP ${res.status} for user ${userId}`,
+        );
+        return;
+      }
+
+      const headerType = (res.headers.get('content-type') || '')
+        .split(';')[0]
+        .trim()
+        .toLowerCase();
+      const buffer = Buffer.from(await res.arrayBuffer());
+      if (buffer.byteLength < 64 || buffer.byteLength > MAX_OAUTH_AVATAR_BYTES) {
+        return;
+      }
+
+      const mimeType = this.sniffImageMime(buffer, headerType);
+      if (!mimeType) {
+        this.logger.warn(`OAuth avatar unsupported type for user ${userId}`);
+        return;
+      }
+
+      const avatarVariants = await this.imageProcessor.processImage(
+        buffer,
+        mimeType,
+        ['thumb', 'small', 'medium', 'large'],
+      );
+      const cardVariants = await this.imageProcessor.processImage(
+        buffer,
+        mimeType,
+        ['cardThumb', 'card', 'original'],
+      );
+
+      await this.mediaService.replaceCollection(
+        {
+          entityType: USER_ENTITY_TYPE,
+          entityId: userId,
+          collection: AVATAR_COLLECTION,
+        },
+        avatarVariants,
+      );
+      await this.mediaService.replaceCollection(
+        {
+          entityType: USER_ENTITY_TYPE,
+          entityId: userId,
+          collection: PROFILE_CARD_COLLECTION,
+        },
+        cardVariants,
+      );
+
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { updatedAt: new Date() },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `OAuth avatar import failed for ${userId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  private sniffImageMime(
+    buffer: Buffer,
+    headerType: string,
+  ): string | null {
+    if (
+      headerType === 'image/jpeg' ||
+      headerType === 'image/png' ||
+      headerType === 'image/webp'
+    ) {
+      return headerType;
+    }
+    if (buffer[0] === 0xff && buffer[1] === 0xd8) {
+      return 'image/jpeg';
+    }
+    if (
+      buffer[0] === 0x89 &&
+      buffer[1] === 0x50 &&
+      buffer[2] === 0x4e &&
+      buffer[3] === 0x47
+    ) {
+      return 'image/png';
+    }
+    if (
+      buffer.toString('ascii', 0, 4) === 'RIFF' &&
+      buffer.toString('ascii', 8, 12) === 'WEBP'
+    ) {
+      return 'image/webp';
+    }
+    return null;
   }
 
   private async recordRegistration(

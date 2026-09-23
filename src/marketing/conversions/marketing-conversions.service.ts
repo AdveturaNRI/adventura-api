@@ -12,10 +12,8 @@ const ATTRIBUTION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_CONVERSIONS_PER_MINUTE = 40;
 
 /** Hits that must not inherit campaign from last-touch without an explicit variant. */
-const EXPLICIT_VARIANT_ONLY_TYPES: ReadonlySet<MarketingConversionType> = new Set([
-  'LANDING_VIEW',
-  'CTA_CLICK',
-]);
+const EXPLICIT_VARIANT_ONLY_TYPES: ReadonlySet<MarketingConversionType> =
+  new Set(['LANDING_VIEW', 'CTA_CLICK']);
 
 type ResolvedVariant = {
   id: string;
@@ -94,7 +92,9 @@ export class MarketingConversionsService {
     const landingId =
       variant?.landingId ??
       (input.landingId?.trim() || null) ??
-      (landingSlug ? await this.resolvePublishedLandingIdBySlug(landingSlug) : null);
+      (landingSlug
+        ? await this.resolvePublishedLandingIdBySlug(landingSlug)
+        : null);
 
     const attribution = await this.resolveAttribution({
       userId,
@@ -105,9 +105,10 @@ export class MarketingConversionsService {
     const inheritLastTouch = !EXPLICIT_VARIANT_ONLY_TYPES.has(input.type);
     const campaignId =
       variant?.campaignId ??
-      (inheritLastTouch ? attribution.lastTouch?.campaignId ?? null : null);
+      (inheritLastTouch ? (attribution.lastTouch?.campaignId ?? null) : null);
     const variantId =
-      variant?.id ?? (inheritLastTouch ? attribution.lastTouch?.variantId ?? null : null);
+      variant?.id ??
+      (inheritLastTouch ? (attribution.lastTouch?.variantId ?? null) : null);
     const touchId = attribution.lastTouch?.id ?? null;
 
     const props = this.safeProps({
@@ -187,25 +188,29 @@ export class MarketingConversionsService {
       },
     });
 
-    if (!variant || variant.campaign.status === MarketingCampaignStatus.ARCHIVED) {
-      throw new BadRequestException('Вариант рекламной кампании недоступен');
-    }
-
-    if (variant.landing.status !== MarketingLandingStatus.PUBLISHED) {
-      throw new BadRequestException('Лендинг варианта ещё не опубликован');
+    // Soft-drop bad variants so the conversion is still stored (landing-only).
+    // DRAFT/READY/ACTIVE/PAUSED/COMPLETED all attribute; only ARCHIVED is out.
+    if (
+      !variant ||
+      variant.campaign.status === MarketingCampaignStatus.ARCHIVED ||
+      variant.landing.status !== MarketingLandingStatus.PUBLISHED
+    ) {
+      return null;
     }
 
     if (
       input.landingSlug &&
       input.landingSlug.toLowerCase() !== variant.landing.slug.toLowerCase()
     ) {
-      throw new BadRequestException('Вариант кампании не соответствует лендингу');
+      return null;
     }
 
     return variant;
   }
 
-  private async resolvePublishedLandingIdBySlug(slugRaw: string): Promise<string> {
+  private async resolvePublishedLandingIdBySlug(
+    slugRaw: string,
+  ): Promise<string> {
     const slug = slugRaw.trim().toLowerCase();
     const landing = await this.prisma.marketingLanding.findFirst({
       where: {
@@ -215,7 +220,8 @@ export class MarketingConversionsService {
       },
       select: { id: true },
     });
-    if (!landing) throw new BadRequestException('Опубликованный лендинг не найден');
+    if (!landing)
+      throw new BadRequestException('Опубликованный лендинг не найден');
     return landing.id;
   }
 
@@ -274,6 +280,9 @@ export class MarketingConversionsService {
   }
 
   private isUniqueViolation(error: unknown) {
-    return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    );
   }
 }

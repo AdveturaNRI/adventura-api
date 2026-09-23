@@ -4,8 +4,10 @@ import { JwtModule, type JwtSignOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 
 import { AnalyticsModule } from '../analytics/analytics.module';
+import { ImageModule } from '../image/image.module';
 import { MarketingAttributionModule } from '../marketing/attribution/marketing-attribution.module';
 import { MarketingConversionsModule } from '../marketing/conversions/marketing-conversions.module';
+import { MediaModule } from '../media/media.module';
 import { NicknameModule } from '../nickname/nickname.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -18,6 +20,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 @Module({
   imports: [
     NicknameModule,
+    MediaModule,
+    ImageModule,
     forwardRef(() => AnalyticsModule),
     forwardRef(() => MarketingAttributionModule),
     MarketingConversionsModule,

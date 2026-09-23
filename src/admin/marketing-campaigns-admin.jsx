@@ -438,7 +438,11 @@ export default function MarketingCampaignsAdmin() {
               <Box mt="xl" display="grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 24 }}>
                 <Box>
                   <Header.H4>Варианты ссылок</Header.H4>
-                  <FieldHint>Один креатив / аудитория = один вариант. У каждого свой URL с UTM.</FieldHint>
+                  <FieldHint>
+                    Один креатив / аудитория = один вариант. В рекламу копируй именно сгенерированный URL
+                    (с <code>adv_variant</code>) — без него просмотры не привяжутся к кампании. При создании
+                    первого варианта черновик автоматически станет «Готова к запуску».
+                  </FieldHint>
                   {(campaign.variants ?? []).length === 0 && <Text mt="md" color="grey60">Пока нет — создай справа.</Text>}
                   {(campaign.variants ?? []).map((v) => {
                     const landingWarning =

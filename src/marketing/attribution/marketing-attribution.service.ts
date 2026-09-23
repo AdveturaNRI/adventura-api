@@ -1,8 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import {
   MarketingCampaignStatus,
   MarketingLandingStatus,
-  type Prisma,
+  Prisma,
 } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
@@ -17,7 +17,13 @@ type ResolvedVariant = {
   campaignId: string;
   landingId: string;
   campaign: { status: MarketingCampaignStatus };
-  landing: { slug: string };
+  landing: { slug: string; status: MarketingLandingStatus };
+  utmSource: string;
+  utmMedium: string;
+  utmCampaign: string;
+  utmContent: string | null;
+  utmTerm: string | null;
+  utmId: string | null;
 };
 
 @Injectable()
@@ -33,8 +39,26 @@ export class MarketingAttributionService {
     const variant = await this.resolveVariant(dto);
     const landingId =
       variant?.landingId ??
-      (dto.landingSlug ? await this.resolveLandingIdBySlug(dto.landingSlug) : null);
+      (dto.landingSlug
+        ? await this.resolveLandingIdBySlug(dto.landingSlug)
+        : null);
     const variantId = variant?.id ?? null;
+    const idempotencyKey = this.text(dto.idempotencyKey);
+
+    if (idempotencyKey) {
+      const existing = await this.prisma.marketingAttributionTouch.findUnique({
+        where: { idempotencyKey },
+        select: { id: true, occurredAt: true },
+      });
+      if (existing) {
+        return {
+          recorded: false,
+          reason: 'duplicate',
+          touchId: existing.id,
+          occurredAt: existing.occurredAt,
+        };
+      }
+    }
 
     const duplicate = await this.prisma.marketingAttributionTouch.findFirst({
       where: {
@@ -47,7 +71,8 @@ export class MarketingAttributionService {
       orderBy: { occurredAt: 'desc' },
       select: { id: true },
     });
-    if (duplicate) return { recorded: false, reason: 'duplicate', touchId: duplicate.id };
+    if (duplicate)
+      return { recorded: false, reason: 'duplicate', touchId: duplicate.id };
 
     const recentCount = await this.prisma.marketingAttributionTouch.count({
       where: {
@@ -59,19 +84,45 @@ export class MarketingAttributionService {
       return { recorded: false, reason: 'rate_limited' };
     }
 
-    const touch = await this.prisma.marketingAttributionTouch.create({
-      data: {
-        anonymousId: dto.anonymousId,
-        campaignId: variant?.campaignId ?? null,
-        variantId,
-        landingId,
-        ...this.utmData(dto),
-        yclid: this.text(dto.yclid),
-        referrer: this.normalizeReferrer(dto.referrer),
-        occurredAt: now,
-      },
-      select: { id: true, occurredAt: true },
-    });
+    let touch;
+    try {
+      touch = await this.prisma.marketingAttributionTouch.create({
+        data: {
+          anonymousId: dto.anonymousId,
+          idempotencyKey,
+          campaignId: variant?.campaignId ?? null,
+          variantId,
+          landingId,
+          ...this.utmData(dto, variant),
+          yclid: this.text(dto.yclid),
+          referrer: this.normalizeReferrer(dto.referrer),
+          occurredAt: now,
+        },
+        select: { id: true, occurredAt: true },
+      });
+    } catch (error) {
+      if (
+        idempotencyKey &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const existing = await this.prisma.marketingAttributionTouch.findUnique(
+          {
+            where: { idempotencyKey },
+            select: { id: true, occurredAt: true },
+          },
+        );
+        if (existing) {
+          return {
+            recorded: false,
+            reason: 'duplicate',
+            touchId: existing.id,
+            occurredAt: existing.occurredAt,
+          };
+        }
+      }
+      throw error;
+    }
 
     return { recorded: true, touchId: touch.id, occurredAt: touch.occurredAt };
   }
@@ -118,19 +169,36 @@ export class MarketingAttributionService {
         campaignId: true,
         landingId: true,
         campaign: { select: { status: true } },
-        landing: { select: { slug: true } },
+        landing: { select: { slug: true, status: true } },
+        utmSource: true,
+        utmMedium: true,
+        utmCampaign: true,
+        utmContent: true,
+        utmTerm: true,
+        utmId: true,
       },
     });
-    if (!variant || variant.campaign.status === MarketingCampaignStatus.ARCHIVED) {
-      throw new BadRequestException('Вариант рекламной кампании недоступен');
+    // Soft-drop unknown / archived / unpublished variants so the page hit is
+    // still stored (landing-only). DRAFT/READY/ACTIVE/PAUSED all attribute.
+    if (
+      !variant ||
+      variant.campaign.status === MarketingCampaignStatus.ARCHIVED ||
+      variant.landing.status !== MarketingLandingStatus.PUBLISHED
+    ) {
+      return null;
     }
-    if (dto.landingSlug && dto.landingSlug.toLowerCase() !== variant.landing.slug.toLowerCase()) {
-      throw new BadRequestException('Вариант кампании не соответствует лендингу');
+    if (
+      dto.landingSlug &&
+      dto.landingSlug.toLowerCase() !== variant.landing.slug.toLowerCase()
+    ) {
+      return null;
     }
     return variant;
   }
 
-  private async resolveLandingIdBySlug(slugRaw: string): Promise<string | null> {
+  private async resolveLandingIdBySlug(
+    slugRaw: string,
+  ): Promise<string | null> {
     const slug = slugRaw.trim().toLowerCase();
     if (!slug) return null;
     const landing = await this.prisma.marketingLanding.findFirst({
@@ -146,6 +214,7 @@ export class MarketingAttributionService {
 
   private utmData(
     dto: RecordMarketingTouchDto,
+    variant: ResolvedVariant | null,
   ): Pick<
     Prisma.MarketingAttributionTouchUncheckedCreateInput,
     | 'utmSource'
@@ -156,13 +225,20 @@ export class MarketingAttributionService {
     | 'utmId'
   > {
     return {
-      utmSource: this.text(dto.utmSource),
-      utmMedium: this.text(dto.utmMedium),
-      utmCampaign: this.text(dto.utmCampaign),
-      utmContent: this.text(dto.utmContent),
-      utmTerm: this.text(dto.utmTerm),
-      utmId: this.text(dto.utmId),
+      utmSource: variant?.utmSource ?? this.sanitizeUtm(dto.utmSource, 128),
+      utmMedium: variant?.utmMedium ?? this.sanitizeUtm(dto.utmMedium, 128),
+      utmCampaign:
+        variant?.utmCampaign ?? this.sanitizeUtm(dto.utmCampaign, 128),
+      utmContent: variant?.utmContent ?? this.sanitizeUtm(dto.utmContent, 256),
+      utmTerm: variant?.utmTerm ?? this.sanitizeUtm(dto.utmTerm, 256),
+      utmId: variant?.utmId ?? this.sanitizeUtm(dto.utmId, 128),
     };
+  }
+
+  private sanitizeUtm(value: string | undefined, max: number): string | null {
+    const normalized = value?.trim().replace(/[\u0000-\u001f\u007f]/g, '');
+    if (!normalized) return null;
+    return normalized.slice(0, max);
   }
 
   private normalizeReferrer(value?: string): string | null {
@@ -170,10 +246,12 @@ export class MarketingAttributionService {
     if (!raw) return null;
     try {
       const url = new URL(raw);
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error();
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return null;
+      }
       return url.origin;
     } catch {
-      throw new BadRequestException('Некорректный referrer');
+      return null;
     }
   }
 

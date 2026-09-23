@@ -2279,9 +2279,34 @@ export class ChatsService {
 
     this.activeVoiceCalls.set(callId, call);
     this.realtime.emitCallInvite(targets, payload);
+    void this.pushVoiceCallInvite(targets, payload);
 
     const ringing = await this.toVoiceCallPeers(targets);
     return { callId, conversationId, isGroup, ringing };
+  }
+
+  /** Offline callees only — online users already got `call:invite` over socket. */
+  private async pushVoiceCallInvite(targets: string[], invite: CallInvitePayload) {
+    if (targets.length === 0) {
+      return;
+    }
+
+    const caller = invite.fromNickname?.trim() || 'Собеседник';
+    const title =
+      invite.isGroup && invite.conversationTitle?.trim()
+        ? invite.conversationTitle.trim()
+        : caller;
+    const body = invite.isGroup ? `${caller} звонит в группу` : 'Входящий звонок';
+
+    const payload = {
+      title,
+      body,
+      ...(invite.fromAvatarUrl ? { icon: invite.fromAvatarUrl } : {}),
+      tag: `call:${invite.callId}`,
+      url: `/chats/${encodeURIComponent(invite.conversationId)}`,
+    };
+
+    await Promise.all(targets.map((id) => this.pushSubscriptions.sendToUser(id, payload)));
   }
 
   async getActiveVoiceCall(userId: string, conversationId: string) {

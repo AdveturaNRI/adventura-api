@@ -264,8 +264,29 @@ export class MarketingCampaignsService {
     if (!landing || landing.status === 'ARCHIVED') throw new NotFoundException('Лендинг не найден или архивирован');
     const required = [input.name, input.utmSource, input.utmMedium, input.utmCampaign].map((value) => value.trim());
     if (required.some((value) => !value || value.length > 160)) throw new BadRequestException('Название и обязательные UTM-параметры указаны неверно');
-    return this.prisma.marketingCampaignVariant.create({
-      data: { campaignId: campaign.id, landingId: landing.id, name: required[0], utmSource: required[1], utmMedium: required[2], utmCampaign: required[3], utmContent: input.utmContent?.trim() || null, utmTerm: input.utmTerm?.trim() || null, utmId: input.utmId?.trim() || null },
+
+    const variant = await this.prisma.marketingCampaignVariant.create({
+      data: {
+        campaignId: campaign.id,
+        landingId: landing.id,
+        name: required[0],
+        utmSource: required[1],
+        utmMedium: required[2],
+        utmCampaign: required[3],
+        utmContent: input.utmContent?.trim() || null,
+        utmTerm: input.utmTerm?.trim() || null,
+        utmId: input.utmId?.trim() || null,
+      },
     });
+
+    // First tracking link ⇒ leave DRAFT so visits already count in analytics.
+    if (campaign.status === MarketingCampaignStatus.DRAFT) {
+      await this.prisma.marketingCampaign.update({
+        where: { id: campaign.id },
+        data: { status: MarketingCampaignStatus.READY },
+      });
+    }
+
+    return variant;
   }
 }

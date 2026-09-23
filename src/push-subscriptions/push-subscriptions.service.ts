@@ -14,6 +14,8 @@ export type WebPushPayload = {
   icon?: string;
   tag?: string;
   url?: string;
+  /** Keep toast until user interacts (useful for call invites). */
+  requireInteraction?: boolean;
 };
 
 const FCM_KEY_MARKER = 'fcm';
@@ -271,6 +273,8 @@ export class PushSubscriptionsService implements OnModuleInit {
     const icon = payload.icon ?? '/icons/icon-192.png';
     const url = payload.url ?? '/';
     const tag = payload.tag ?? 'adventura';
+    const requireInteraction =
+      payload.requireInteraction ?? (typeof tag === 'string' && tag.startsWith('call:'));
 
     await Promise.all(
       subscriptions.map(async (sub) => {
@@ -281,6 +285,7 @@ export class PushSubscriptionsService implements OnModuleInit {
             icon,
             tag,
             url,
+            requireInteraction,
           });
           return;
         }
@@ -299,6 +304,7 @@ export class PushSubscriptionsService implements OnModuleInit {
               icon,
               tag,
               url,
+              requireInteraction,
             }),
           );
         } catch (error) {
@@ -328,7 +334,9 @@ export class PushSubscriptionsService implements OnModuleInit {
   private async sendFcm(
     token: string,
     subscriptionId: string,
-    payload: Required<WebPushPayload>,
+    payload: Required<Pick<WebPushPayload, 'title' | 'body' | 'icon' | 'tag' | 'url'>> & {
+      requireInteraction?: boolean;
+    },
   ) {
     if (!this.fcmConfigured) {
       return;
@@ -353,6 +361,7 @@ export class PushSubscriptionsService implements OnModuleInit {
             badge: payload.icon,
             tag: payload.tag,
             renotify: true,
+            requireInteraction: Boolean(payload.requireInteraction),
           },
           fcmOptions: {
             link: payload.url.startsWith('http')

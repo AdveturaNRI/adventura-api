@@ -17,7 +17,10 @@ export class MarketingLandingsController {
 
   @Get('assets/:assetId')
   async asset(@Param('assetId') assetId: string, @Res() res: Response) {
-    return res.redirect(302, await this.landings.getAssetUrl(assetId));
+    const asset = await this.landings.getAsset(assetId);
+    res.setHeader('Content-Type', asset.contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+    return res.status(200).send(asset.body);
   }
 
   @Get(':slug')

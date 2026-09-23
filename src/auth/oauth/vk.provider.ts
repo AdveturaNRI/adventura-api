@@ -25,12 +25,30 @@ type VkUserInfoResponse = {
   user?: {
     user_id?: string | number;
     email?: string;
+    avatar?: string;
+    first_name?: string;
+    last_name?: string;
   };
   user_id?: string | number;
   email?: string;
   error?: string;
   error_description?: string;
 };
+
+/** Prefer a large square crop for our avatar pipeline. */
+function preferLargeVkAvatar(url: string | null | undefined): string | null {
+  const raw = url?.trim();
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = new URL(raw);
+    parsed.searchParams.set('cs', '720x720');
+    return parsed.toString();
+  } catch {
+    return raw;
+  }
+}
 
 @Injectable()
 export class VkOAuthProvider {
@@ -80,11 +98,19 @@ export class VkOAuthProvider {
       payload.user?.email?.trim().toLowerCase() ||
       payload.email?.trim().toLowerCase() ||
       null;
+    const avatarUrl = preferLargeVkAvatar(payload.user?.avatar);
+
+    if (!email) {
+      this.logger.warn(
+        `VK user_info without email for user_id=${userId} (check app email access + scope=email)`,
+      );
+    }
 
     return {
       provider: OAuthProvider.VK,
       providerUserId: String(userId),
       email,
+      avatarUrl,
     };
   }
 
@@ -139,10 +165,19 @@ export class VkOAuthProvider {
       );
     }
 
+    const email = payload.response.email?.trim().toLowerCase() || null;
+    if (!email) {
+      this.logger.warn(
+        `VK silent exchange without email for user_id=${payload.response.user_id}`,
+      );
+    }
+
+    // Silent exchange has no avatar field — leave null.
     return {
       provider: OAuthProvider.VK,
       providerUserId: String(payload.response.user_id),
-      email: payload.response.email?.trim().toLowerCase() || null,
+      email,
+      avatarUrl: null,
     };
   }
 }
