@@ -13,6 +13,11 @@ export class CreateMusicPlaylistDto {
   @MinLength(1, { message: 'Укажите название плейлиста' })
   @MaxLength(120, { message: 'Название слишком длинное' })
   title!: string;
+
+  @IsOptional()
+  @IsString({ message: 'Укажите родительскую папку' })
+  @MinLength(1, { message: 'Укажите родительскую папку' })
+  parentId?: string;
 }
 
 export class UpdateMusicPlaylistDto {
