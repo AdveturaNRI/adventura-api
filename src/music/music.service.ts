@@ -77,6 +77,8 @@ export type MusicTrackDto = {
   durationSec: number | null;
   source: MusicTrackSource;
   url: string | null;
+  /** True when the track belongs to at least one folder. */
+  inFolder: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -84,14 +86,17 @@ export type MusicTrackDto = {
 export type MusicPlaylistSummaryDto = {
   id: string;
   title: string;
+  parentId: string | null;
   sortOrder: number;
   trackCount: number;
+  folderCount: number;
   createdAt: string;
   updatedAt: string;
 };
 
 export type MusicPlaylistDetailDto = MusicPlaylistSummaryDto & {
   tracks: MusicTrackDto[];
+  children: MusicPlaylistSummaryDto[];
 };
 
 export type MusicQuotaDto = {
@@ -154,20 +159,34 @@ export class MusicService {
     tracks: MusicTrackDto[];
     quota: MusicQuotaDto;
   }> {
-    const tracks = await this.prisma.musicTrack.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-    });
-    const [mapped, quota] = await Promise.all([
-      Promise.all(tracks.map((track) => this.toTrackDto(track))),
+    const [tracks, filedRows, quota] = await Promise.all([
+      this.prisma.musicTrack.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.musicPlaylistItem.findMany({
+        where: { track: { userId } },
+        select: { trackId: true },
+        distinct: ['trackId'],
+      }),
       this.getQuota(userId),
     ]);
+    const filedIds = new Set(filedRows.map((row) => row.trackId));
+    const mapped = await Promise.all(
+      tracks.map((track) => this.toTrackDto(track, filedIds.has(track.id))),
+    );
     return { tracks: mapped, quota };
   }
 
   async getTrack(userId: string, trackId: string): Promise<MusicTrackDto> {
     const track = await this.requireTrack(userId, trackId);
-    return this.toTrackDto(track);
+    const inFolder = Boolean(
+      await this.prisma.musicPlaylistItem.findFirst({
+        where: { trackId: track.id },
+        select: { trackId: true },
+      }),
+    );
+    return this.toTrackDto(track, inFolder);
   }
 
   /** Свежие signed URL для очереди плеера (без полной карточки трека). */
@@ -380,16 +399,15 @@ export class MusicService {
     const playlists = await this.prisma.musicPlaylist.findMany({
       where: { userId },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-      include: { _count: { select: { items: true } } },
+      include: {
+        _count: { select: { items: true, children: true } },
+      },
     });
 
+    const deepById = this.buildDeepTrackCounts(playlists);
     return playlists.map((playlist) => ({
-      id: playlist.id,
-      title: playlist.title,
-      sortOrder: playlist.sortOrder,
-      trackCount: playlist._count.items,
-      createdAt: playlist.createdAt.toISOString(),
-      updatedAt: playlist.updatedAt.toISOString(),
+      ...this.toPlaylistSummary(playlist),
+      trackCount: deepById.get(playlist.id) ?? playlist._count.items,
     }));
   }
 
@@ -397,14 +415,20 @@ export class MusicService {
     userId: string,
     dto: CreateMusicPlaylistDto,
   ): Promise<MusicPlaylistDetailDto> {
+    const parentId = dto.parentId?.trim() || null;
+    if (parentId) {
+      await this.requirePlaylist(userId, parentId);
+    }
+
     const maxSort = await this.prisma.musicPlaylist.aggregate({
-      where: { userId },
+      where: { userId, parentId },
       _max: { sortOrder: true },
     });
 
     const playlist = await this.prisma.musicPlaylist.create({
       data: {
         userId,
+        parentId,
         title: dto.title.trim().slice(0, 120),
         sortOrder: (maxSort._max.sortOrder ?? -1) + 1,
       },
@@ -418,24 +442,45 @@ export class MusicService {
     playlistId: string,
   ): Promise<MusicPlaylistDetailDto> {
     const playlist = await this.requirePlaylist(userId, playlistId);
-    const items = await this.prisma.musicPlaylistItem.findMany({
-      where: { playlistId: playlist.id },
-      orderBy: { sortOrder: 'asc' },
-      include: { track: true },
-    });
+    const [items, children, allForCounts] = await Promise.all([
+      this.prisma.musicPlaylistItem.findMany({
+        where: { playlistId: playlist.id },
+        orderBy: { sortOrder: 'asc' },
+        include: { track: true },
+      }),
+      this.prisma.musicPlaylist.findMany({
+        where: { userId, parentId: playlist.id },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+        include: {
+          _count: { select: { items: true, children: true } },
+        },
+      }),
+      this.prisma.musicPlaylist.findMany({
+        where: { userId },
+        select: {
+          id: true,
+          parentId: true,
+          _count: { select: { items: true } },
+        },
+      }),
+    ]);
 
     const tracks = await Promise.all(
-      items.map((item) => this.toTrackDto(item.track)),
+      items.map((item) => this.toTrackDto(item.track, true)),
     );
+    const deepById = this.buildDeepTrackCounts(allForCounts);
 
     return {
-      id: playlist.id,
-      title: playlist.title,
-      sortOrder: playlist.sortOrder,
-      trackCount: tracks.length,
-      createdAt: playlist.createdAt.toISOString(),
-      updatedAt: playlist.updatedAt.toISOString(),
+      ...this.toPlaylistSummary({
+        ...playlist,
+        _count: { items: tracks.length, children: children.length },
+      }),
+      trackCount: deepById.get(playlist.id) ?? tracks.length,
       tracks,
+      children: children.map((child) => ({
+        ...this.toPlaylistSummary(child),
+        trackCount: deepById.get(child.id) ?? child._count.items,
+      })),
     };
   }
 
@@ -572,18 +617,78 @@ export class MusicService {
     return playlist;
   }
 
-  private async toTrackDto(track: {
+  private buildDeepTrackCounts(
+    playlists: Array<{
+      id: string;
+      parentId: string | null;
+      _count: { items: number };
+    }>,
+  ): Map<string, number> {
+    const childrenByParent = new Map<string | null, string[]>();
+    const directItems = new Map<string, number>();
+    for (const playlist of playlists) {
+      directItems.set(playlist.id, playlist._count.items);
+      const siblings = childrenByParent.get(playlist.parentId) ?? [];
+      siblings.push(playlist.id);
+      childrenByParent.set(playlist.parentId, siblings);
+    }
+
+    const memo = new Map<string, number>();
+    const deep = (id: string): number => {
+      const cached = memo.get(id);
+      if (cached != null) {
+        return cached;
+      }
+      const nested = childrenByParent.get(id) ?? [];
+      const total =
+        (directItems.get(id) ?? 0) +
+        nested.reduce((sum, childId) => sum + deep(childId), 0);
+      memo.set(id, total);
+      return total;
+    };
+
+    for (const playlist of playlists) {
+      deep(playlist.id);
+    }
+    return memo;
+  }
+
+  private toPlaylistSummary(playlist: {
     id: string;
-    userId: string;
     title: string;
-    originalName: string | null;
-    mimeType: string;
-    sizeBytes: number;
-    durationSec: number | null;
-    externalUrl: string | null;
+    parentId: string | null;
+    sortOrder: number;
     createdAt: Date;
     updatedAt: Date;
-  }): Promise<MusicTrackDto> {
+    _count: { items: number; children: number };
+  }): MusicPlaylistSummaryDto {
+    return {
+      id: playlist.id,
+      title: playlist.title,
+      parentId: playlist.parentId,
+      sortOrder: playlist.sortOrder,
+      trackCount: playlist._count.items,
+      folderCount: playlist._count.children,
+      createdAt: playlist.createdAt.toISOString(),
+      updatedAt: playlist.updatedAt.toISOString(),
+    };
+  }
+
+  private async toTrackDto(
+    track: {
+      id: string;
+      userId: string;
+      title: string;
+      originalName: string | null;
+      mimeType: string;
+      sizeBytes: number;
+      durationSec: number | null;
+      externalUrl: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    },
+    inFolder = false,
+  ): Promise<MusicTrackDto> {
     if (track.externalUrl) {
       return {
         id: track.id,
@@ -594,6 +699,7 @@ export class MusicService {
         durationSec: track.durationSec,
         source: 'external',
         url: await this.resolveExternalPlayUrl(track.externalUrl),
+        inFolder,
         createdAt: track.createdAt.toISOString(),
         updatedAt: track.updatedAt.toISOString(),
       };
@@ -618,6 +724,7 @@ export class MusicService {
       durationSec: track.durationSec ?? file?.durationSec ?? null,
       source: 'upload',
       url,
+      inFolder,
       createdAt: track.createdAt.toISOString(),
       updatedAt: track.updatedAt.toISOString(),
     };

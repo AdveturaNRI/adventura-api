@@ -1034,14 +1034,19 @@ model MusicTrack {
 model MusicPlaylist {
   id        String              @id @default(cuid())
   userId    String
+  parentId  String?
   title     String
   sortOrder Int                 @default(0)
   createdAt DateTime            @default(now())
   updatedAt DateTime            @updatedAt
   user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent    MusicPlaylist?      @relation("MusicPlaylistTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children  MusicPlaylist[]     @relation("MusicPlaylistTree")
   items     MusicPlaylistItem[]
 
   @@index([userId, sortOrder])
+  @@index([userId, parentId])
+  @@index([parentId])
   @@map("music_playlists")
 }
 
