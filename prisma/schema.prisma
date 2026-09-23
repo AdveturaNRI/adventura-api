@@ -71,6 +71,8 @@ model User {
   marketingAttributionTouches MarketingAttributionTouch[]
   marketingConversions        MarketingConversion[]
   oauthAccounts               OAuthAccount[]
+  musicTracks                 MusicTrack[]
+  musicPlaylists              MusicPlaylist[]
 
   @@index([notificationSoundPresetId])
 }
@@ -990,4 +992,69 @@ model MarketingConversion {
   @@index([userId, type, occurredAt])
   @@index([anonymousId, type, occurredAt])
   @@map("marketing_conversions")
+}
+
+model Partner {
+  id        String   @id @default(cuid())
+  name      String
+  href      String
+  /// Короткий текст на плашке, если нет logoUrl
+  mark      String   @default("")
+  accent    String   @default("#157AFE")
+  logoUrl   String?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+  @@map("partners")
+}
+
+/// Треки мастерской: фон/атмосфера для стола, пока только у владельца.
+model MusicTrack {
+  id           String              @id @default(cuid())
+  userId       String
+  title        String
+  originalName String?
+  mimeType     String
+  sizeBytes    Int
+  durationSec  Int?
+  /// Прямая ссылка на чужой хост: файл в S3 не храним, играем с URL.
+  externalUrl  String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  playlists    MusicPlaylistItem[]
+
+  @@index([userId, createdAt])
+  @@map("music_tracks")
+}
+
+model MusicPlaylist {
+  id        String              @id @default(cuid())
+  userId    String
+  title     String
+  sortOrder Int                 @default(0)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     MusicPlaylistItem[]
+
+  @@index([userId, sortOrder])
+  @@map("music_playlists")
+}
+
+model MusicPlaylistItem {
+  playlistId String
+  trackId    String
+  sortOrder  Int           @default(0)
+  createdAt  DateTime      @default(now())
+  playlist   MusicPlaylist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  track      MusicTrack    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@id([playlistId, trackId])
+  @@index([trackId])
+  @@index([playlistId, sortOrder])
+  @@map("music_playlist_items")
 }

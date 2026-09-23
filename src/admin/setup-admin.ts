@@ -2075,6 +2075,42 @@ export async function setupAdmin(
         },
       },
       {
+        resource: { model: getModelByName('Partner'), client: prisma },
+        options: {
+          navigation: { name: 'Справочники', icon: 'Book' },
+          listProperties: [
+            'id',
+            'name',
+            'href',
+            'mark',
+            'accent',
+            'logoUrl',
+            'sortOrder',
+            'isActive',
+          ],
+          properties: {
+            href: {
+              isRequired: true,
+            },
+            mark: {
+              isRequired: false,
+              description: 'Две буквы на плашке, если нет logoUrl',
+            },
+            accent: {
+              isRequired: false,
+              description: 'HEX цвета плашки, например #157AFE',
+            },
+            logoUrl: {
+              isRequired: false,
+              description: 'Прямая ссылка на логотип (PNG/SVG/WebP)',
+            },
+            isActive: {
+              isRequired: false,
+            },
+          },
+        },
+      },
+      {
         resource: { model: getModelByName('Country'), client: prisma },
         options: {
           navigation: { name: 'Справочники', icon: 'Book' },

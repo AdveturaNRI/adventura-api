@@ -2311,11 +2311,14 @@ export class ChatsService {
     const call = this.requireVoiceCall(callId, conversationId);
 
     if (call.joinedUserIds.includes(userId)) {
-      return {
+      const signal = {
         callId: call.callId,
         conversationId: call.conversationId,
         byUserId: userId,
       };
+      // Idempotent re-accept: still nudge other devices that may be ringing.
+      this.realtime.emitCallAccepted([userId], signal);
+      return signal;
     }
 
     // Ring timed out or busy UI parked the invite — chat members may still late-join.
@@ -2338,9 +2341,9 @@ export class ChatsService {
       byUserId: userId,
     };
 
-    const notify = uniqueIds(
-      [...call.joinedUserIds, ...call.ringingUserIds].filter((id) => id !== userId),
-    );
+    // Include the accepter: their other devices still ring and must stop
+    // (client treats byUserId === me as "answered elsewhere").
+    const notify = uniqueIds([...call.joinedUserIds, ...call.ringingUserIds]);
     if (notify.length > 0) {
       this.realtime.emitCallAccepted(notify, signal);
     }
@@ -2361,11 +2364,13 @@ export class ChatsService {
     }
 
     if (call.joinedUserIds.includes(userId)) {
-      return {
+      const signal = {
         callId: call.callId,
         conversationId: call.conversationId,
         byUserId: userId,
       };
+      this.realtime.emitCallAccepted([userId], signal);
+      return signal;
     }
 
     call.ringingUserIds = call.ringingUserIds.filter((id) => id !== userId);
@@ -2382,9 +2387,8 @@ export class ChatsService {
       conversationId: call.conversationId,
       byUserId: userId,
     };
-    const notify = uniqueIds(
-      [...call.joinedUserIds, ...call.ringingUserIds].filter((id) => id !== userId),
-    );
+    // Include joiner so other devices of the same account dismiss the ring UI.
+    const notify = uniqueIds([...call.joinedUserIds, ...call.ringingUserIds]);
     if (notify.length > 0) {
       this.realtime.emitCallAccepted(notify, signal);
     }
@@ -2408,9 +2412,8 @@ export class ChatsService {
       byUserId: userId,
     };
 
-    const notifyDeclined = uniqueIds(
-      call.joinedUserIds.filter((id) => id !== userId),
-    );
+    // Joined peers + the decliner (other devices still ringing).
+    const notifyDeclined = uniqueIds([...call.joinedUserIds, userId]);
     if (notifyDeclined.length > 0) {
       this.realtime.emitCallDeclined(notifyDeclined, signal);
     }
@@ -2423,7 +2426,11 @@ export class ChatsService {
     return { ok: true as const };
   }
 
-  /** Leave the call. Ends for everyone when the room is empty. */
+  /**
+   * Leave the call.
+   * Direct (1:1): anyone hanging up ends the call for both — next "Позвонить" is a fresh invite.
+   * Group: room stays up until empty; last person keeps a short lobby for rejoin.
+   */
   async endVoiceCall(userId: string, conversationId: string, callId: string) {
     await this.assertParticipant(userId, conversationId);
     const call = this.activeVoiceCalls.get(callId);
@@ -2454,8 +2461,10 @@ export class ChatsService {
       call.joinedUserIds = call.joinedUserIds.filter((id) => id !== userId);
     }
 
-    // Room empty — end for everyone (direct and group).
-    if (call.joinedUserIds.length === 0) {
+    // Empty room, or 1:1 hangup while the peer was still in — end for everyone.
+    const endForEveryone =
+      call.joinedUserIds.length === 0 || (!call.isGroup && inJoined);
+    if (endForEveryone) {
       const ringingLeft = [...call.ringingUserIds];
       this.clearVoiceCallTimers(call);
       this.activeVoiceCalls.delete(callId);
@@ -2468,10 +2477,8 @@ export class ChatsService {
         // fall back to ringing only
       }
       if (notify.length > 0) {
-        this.realtime.emitCallEnded(
-          notify.filter((id) => id !== userId),
-          signal,
-        );
+        // Include the actor: other devices of the same account may still be ringing.
+        this.realtime.emitCallEnded(notify, signal);
       }
       if (aloneBeforeLeave) {
         try {
@@ -2487,7 +2494,7 @@ export class ChatsService {
       this.clearVoiceCallRingTimer(call);
     }
 
-    // Someone left — remaining people keep the lobby (incl. 1:1 solo wait).
+    // Group: someone left — remaining people keep the lobby.
     if (call.joinedUserIds.length === 1) {
       this.clearVoiceCallWaitTimer(call);
       call.waitTimer = setTimeout(() => {
