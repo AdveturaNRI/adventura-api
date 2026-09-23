@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import { MediaService } from '../media/media.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -106,12 +107,95 @@ export type MusicQuotaDto = {
   trackCount: number;
 };
 
+const EXTRA_PLAYBACK_HOST_SUFFIXES = [
+  'storage.yandexcloud.net',
+  'downloader.disk.yandex.ru',
+  'disk.yandex.ru',
+  'yadisk.net',
+  'getfile.dokpub.com',
+];
+
 @Injectable()
 export class MusicService {
+  private readonly playbackHostAllowlist: Set<string>;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly mediaService: MediaService,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    this.playbackHostAllowlist = buildPlaybackHostAllowlist(configService);
+  }
+
+  /**
+   * Authenticated proxy for call music: signed S3 / Disk URLs often lack CORS,
+   * so Safari cannot run GainNode volume. Browser fetches via API → blob URL.
+   */
+  async proxyPlaybackUrl(
+    rawUrl: string,
+  ): Promise<{ buffer: Buffer; contentType: string }> {
+    const trimmed = rawUrl?.trim();
+    if (!trimmed) {
+      throw new BadRequestException('URL не передан');
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      throw new BadRequestException('Некорректный URL');
+    }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      throw new BadRequestException('Некорректный URL');
+    }
+    if (!this.isAllowedPlaybackHost(parsed.hostname)) {
+      throw new ForbiddenException('Источник не разрешён');
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(parsed.toString(), {
+        redirect: 'follow',
+        headers: { Accept: 'audio/*,*/*' },
+      });
+    } catch {
+      throw new BadRequestException('Не удалось загрузить трек');
+    }
+    if (!response.ok) {
+      throw new BadRequestException('Не удалось загрузить трек');
+    }
+
+    const contentLength = Number(response.headers.get('content-length') || 0);
+    if (contentLength > MAX_MUSIC_TRACK_BYTES) {
+      throw new BadRequestException(
+        `Трек слишком большой (макс. ${formatMusicLimit()})`,
+      );
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > MAX_MUSIC_TRACK_BYTES) {
+      throw new BadRequestException(
+        `Трек слишком большой (макс. ${formatMusicLimit()})`,
+      );
+    }
+
+    const contentType =
+      response.headers.get('content-type')?.split(';')[0]?.trim() ||
+      'audio/mpeg';
+    return { buffer, contentType };
+  }
+
+  private isAllowedPlaybackHost(hostname: string): boolean {
+    const host = hostname.trim().toLowerCase();
+    if (!host) {
+      return false;
+    }
+    if (this.playbackHostAllowlist.has(host)) {
+      return true;
+    }
+    return EXTRA_PLAYBACK_HOST_SUFFIXES.some(
+      (suffix) => host === suffix || host.endsWith(`.${suffix}`),
+    );
+  }
 
   assertAudioFile(file?: Express.Multer.File) {
     if (!file?.buffer?.length) {
@@ -747,6 +831,30 @@ export class MusicService {
     }
     return externalUrl;
   }
+}
+
+function buildPlaybackHostAllowlist(configService: ConfigService): Set<string> {
+  const hosts = new Set<string>();
+  const add = (raw: string | undefined | null) => {
+    const value = raw?.trim();
+    if (!value) {
+      return;
+    }
+    try {
+      const withProtocol = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+      const host = new URL(withProtocol).hostname.trim().toLowerCase();
+      if (host) {
+        hosts.add(host);
+      }
+    } catch {
+      // ignore bad env
+    }
+  };
+  add(configService.get<string>('S3_PUBLIC_ENDPOINT'));
+  add(configService.get<string>('S3_ENDPOINT'));
+  hosts.add('localhost');
+  hosts.add('127.0.0.1');
+  return hosts;
 }
 
 function formatMusicLimit(): string {

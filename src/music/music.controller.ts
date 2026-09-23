@@ -3,16 +3,21 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   Patch,
   Post,
   Put,
+  Query,
+  Res,
+  StreamableFile,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
+import type { Response } from 'express';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -32,6 +37,23 @@ import { MAX_MUSIC_TRACK_BYTES, MusicService } from './music.service';
 @Controller('music')
 export class MusicController {
   constructor(private readonly musicService: MusicService) {}
+
+  /**
+   * Safari ignores HTMLMediaElement.volume — Bard gain needs a same-origin blob.
+   * Proxies allowlisted signed URLs when S3/Disk lack CORS.
+   */
+  @Get('playback')
+  @Header('Cache-Control', 'private, max-age=120')
+  async playback(
+    @CurrentUser() _user: AuthUser,
+    @Query('u') rawUrl: string,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { buffer, contentType } = await this.musicService.proxyPlaybackUrl(rawUrl);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Length', String(buffer.length));
+    return new StreamableFile(buffer);
+  }
 
   @Get('tracks')
   listTracks(@CurrentUser() user: AuthUser) {
