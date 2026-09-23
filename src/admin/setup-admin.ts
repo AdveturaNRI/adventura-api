@@ -1047,6 +1047,10 @@ export async function setupAdmin(
     'MetrikaSettings',
     resolveAdminComponent('metrika-settings'),
   );
+  const vkAdsPixelComponent = componentLoader.add(
+    'VkAdsPixelSettings',
+    resolveAdminComponent('vk-ads-pixel-settings'),
+  );
   const notificationSoundsComponent = componentLoader.add(
     'NotificationSoundsAdmin',
     resolveAdminComponent('notification-sounds-admin'),
@@ -1166,6 +1170,39 @@ export async function setupAdmin(
             }
           }
           return appSettings.getYandexMetrikaAdmin();
+        },
+      },
+      vkAdsPixelSettings: {
+        icon: 'Target',
+        component: vkAdsPixelComponent,
+        handler: async (request: {
+          method?: string;
+          payload?: Record<string, unknown>;
+        }) => {
+          const method = (request.method ?? 'get').toLowerCase();
+          if (method !== 'post') return appSettings.getVkAdsPixelAdmin();
+          try {
+            const saved = await appSettings.saveVkAdsPixel({
+              pixelId: String(request.payload?.pixelId ?? ''),
+            });
+            return {
+              ...saved,
+              notice: {
+                message: saved.pixelId
+                  ? `VK Ads Pixel ${saved.pixelId} сохранён`
+                  : 'VK Ads Pixel выключен (пустой ID)',
+                type: 'success',
+              },
+            };
+          } catch (error) {
+            return {
+              ...(await appSettings.getVkAdsPixelAdmin()),
+              notice: {
+                message: error instanceof Error ? error.message : 'Не удалось сохранить',
+                type: 'error',
+              },
+            };
+          }
         },
       },
       notificationSounds: {
