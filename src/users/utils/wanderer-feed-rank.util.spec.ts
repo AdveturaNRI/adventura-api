@@ -1,4 +1,8 @@
-import { compareWandererFeedRank, questionnaireRichness } from './wanderer-feed-rank.util';
+import {
+  compareWandererFeedRank,
+  questionnaireRichness,
+  wandererFeedRankScore,
+} from './wanderer-feed-rank.util';
 import type { QuestionnaireCompletionInput } from './questionnaire-completion.util';
 
 function completion(overrides: Partial<QuestionnaireCompletionInput> = {}): QuestionnaireCompletionInput {
@@ -72,5 +76,46 @@ describe('wanderer feed rank', () => {
     };
 
     expect(compareWandererFeedRank(justSeen, idleRich, now)).toBeLessThan(0);
+  });
+
+  it('boosts people who actually write and call', () => {
+    const seen = new Date(now - 20 * 60 * 1000);
+    const quiet = {
+      completion: completion(),
+      lastSeenAt: seen,
+      updatedAt: seen,
+      rewards: [] as const,
+      messageCount: 0,
+      callCount: 0,
+      diceRollCount: 0,
+    };
+    const chatty = {
+      ...quiet,
+      messageCount: 40,
+      callCount: 4,
+      diceRollCount: 12,
+    };
+
+    expect(compareWandererFeedRank(chatty, quiet, now)).toBeLessThan(0);
+  });
+
+  it('treats dice rolls as their own activity, not just extra messages', () => {
+    const seen = new Date(now - 20 * 60 * 1000);
+    const noDice = {
+      completion: completion(),
+      lastSeenAt: seen,
+      updatedAt: seen,
+      rewards: [] as const,
+      messageCount: 10,
+      callCount: 0,
+      diceRollCount: 0,
+    };
+    const roller = {
+      ...noDice,
+      diceRollCount: 20,
+    };
+
+    expect(compareWandererFeedRank(roller, noDice, now)).toBeLessThan(0);
+    expect(wandererFeedRankScore(roller, now) - wandererFeedRankScore(noDice, now)).toBeCloseTo(0.04, 8);
   });
 });

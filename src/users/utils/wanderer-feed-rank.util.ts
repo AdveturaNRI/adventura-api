@@ -18,6 +18,9 @@ export type WandererFeedRankInput = {
   lastSeenAt: Date | null;
   updatedAt: Date;
   rewards: ReadonlyArray<{ badgeType: RewardBadgeTypeId }>;
+  messageCount?: number;
+  callCount?: number;
+  diceRollCount?: number;
 };
 
 function textWeight(value: string | null | undefined, softCap: number): number {
@@ -74,11 +77,25 @@ function rewardsScore(rewards: ReadonlyArray<{ badgeType: RewardBadgeTypeId }>):
   return Math.min(1, weighted / maxWeight);
 }
 
+function logCap(count: number, softCap: number): number {
+  if (count <= 0 || softCap <= 0) {
+    return 0;
+  }
+  return Math.min(1, Math.log1p(count) / Math.log1p(softCap));
+}
+
+/** Chat volume: texts + initiated calls. Dice is scored separately. */
+export function chatActivityScore(messageCount = 0, callCount = 0): number {
+  return logCap(messageCount, 80) * 0.56 + logCap(callCount, 8) * 0.44;
+}
+
 export function wandererFeedRankScore(input: WandererFeedRankInput, nowMs = Date.now()): number {
   const richness = questionnaireRichness(input.completion);
   const online = onlineFreshness(input.lastSeenAt, input.updatedAt, nowMs);
   const rewards = rewardsScore(input.rewards);
-  return richness * 0.28 + online * 0.57 + rewards * 0.15;
+  const activity = chatActivityScore(input.messageCount, input.callCount);
+  const dice = logCap(input.diceRollCount ?? 0, 12);
+  return richness * 0.24 + online * 0.5 + rewards * 0.12 + activity * 0.1 + dice * 0.04;
 }
 
 export function compareWandererFeedRank(

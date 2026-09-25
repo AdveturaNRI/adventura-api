@@ -6,7 +6,7 @@ import {
   NotFoundException,
   forwardRef,
 } from '@nestjs/common';
-import { WandererReactionType } from '@prisma/client';
+import { MessageKind, WandererReactionType } from '@prisma/client';
 
 import { ImageProcessorService } from '../image/image-processor.service';
 import {
@@ -378,6 +378,38 @@ export class UsersService {
       take: 400,
     });
 
+    const activityByUser = new Map<
+      string,
+      { messageCount: number; callCount: number; diceRollCount: number }
+    >();
+    if (others.length > 0) {
+      const activityRows = await this.prisma.message.groupBy({
+        by: ['senderId', 'kind'],
+        where: {
+          senderId: { in: others.map((user) => user.id) },
+          kind: {
+            in: [MessageKind.USER, MessageKind.DICE_ROLL, MessageKind.MISSED_VOICE_CALL],
+          },
+        },
+        _count: { _all: true },
+      });
+      for (const row of activityRows) {
+        const current = activityByUser.get(row.senderId) ?? {
+          messageCount: 0,
+          callCount: 0,
+          diceRollCount: 0,
+        };
+        if (row.kind === MessageKind.MISSED_VOICE_CALL) {
+          current.callCount += row._count._all;
+        } else if (row.kind === MessageKind.DICE_ROLL) {
+          current.diceRollCount += row._count._all;
+        } else {
+          current.messageCount += row._count._all;
+        }
+        activityByUser.set(row.senderId, current);
+      }
+    }
+
     const nowMs = Date.now();
     const ranked = (
       await Promise.all(
@@ -398,6 +430,7 @@ export class UsersService {
             lastSeenAt: left.user.lastSeenAt,
             updatedAt: left.user.updatedAt,
             rewards: left.user.rewards,
+            ...activityByUser.get(left.user.id),
           },
           {
             completion: buildQuestionnaireCompletionInput(
@@ -407,6 +440,7 @@ export class UsersService {
             lastSeenAt: right.user.lastSeenAt,
             updatedAt: right.user.updatedAt,
             rewards: right.user.rewards,
+            ...activityByUser.get(right.user.id),
           },
           nowMs,
         ),
