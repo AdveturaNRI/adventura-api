@@ -37,6 +37,7 @@ import {
   isEligibleForWanderersFeed,
   isQuestionnaireComplete,
 } from './utils/questionnaire-completion.util';
+import { compareWandererFeedRank } from './utils/wanderer-feed-rank.util';
 
 const USER_PROFILE_SELECT = {
   id: true,
@@ -63,6 +64,7 @@ const USER_PROFILE_SELECT = {
   useCustomNotificationSound: true,
   createdAt: true,
   updatedAt: true,
+  lastSeenAt: true,
   equippedAvatarFrameId: true,
   equippedQuestionnaireAuraId: true,
   visibleBadgeTypes: true,
@@ -170,6 +172,7 @@ type UserWithRelations = {
   useCustomNotificationSound: boolean;
   createdAt: Date;
   updatedAt: Date;
+  lastSeenAt: Date | null;
   equippedAvatarFrameId: string | null;
   equippedQuestionnaireAuraId: string | null;
   visibleBadgeTypes: unknown;
@@ -371,13 +374,45 @@ export class UsersService {
         id: { notIn: feedExcludeIds },
       },
       select: USER_PROFILE_SELECT,
-      orderBy: { updatedAt: 'desc' },
-      take: 100,
+      orderBy: { lastSeenAt: { sort: 'desc', nulls: 'last' } },
+      take: 400,
     });
 
-    return (
-      await Promise.all(others.map((user) => this.toWandererCard(user)))
-    ).filter((card): card is WandererCard => card !== null);
+    const nowMs = Date.now();
+    const ranked = (
+      await Promise.all(
+        others.map(async (user) => {
+          const card = await this.toWandererCard(user);
+          return card ? { card, user } : null;
+        }),
+      )
+    )
+      .filter((row): row is { card: WandererCard; user: (typeof others)[number] } => row !== null)
+      .sort((left, right) =>
+        compareWandererFeedRank(
+          {
+            completion: buildQuestionnaireCompletionInput(
+              left.user,
+              Boolean(left.card.profileCard),
+            ),
+            lastSeenAt: left.user.lastSeenAt,
+            updatedAt: left.user.updatedAt,
+            rewards: left.user.rewards,
+          },
+          {
+            completion: buildQuestionnaireCompletionInput(
+              right.user,
+              Boolean(right.card.profileCard),
+            ),
+            lastSeenAt: right.user.lastSeenAt,
+            updatedAt: right.user.updatedAt,
+            rewards: right.user.rewards,
+          },
+          nowMs,
+        ),
+      );
+
+    return ranked.slice(0, 100).map((row) => row.card);
   }
 
   async searchWanderers(viewerId: string, rawQuery: string): Promise<WandererCard[]> {
