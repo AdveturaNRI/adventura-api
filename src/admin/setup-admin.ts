@@ -25,6 +25,7 @@ import {
 } from '../users/utils/questionnaire-completion.util';
 import { MarketingCampaignsService } from '../marketing/campaigns/marketing-campaigns.service';
 import { MarketingAnalyticsService } from '../marketing/analytics/marketing-analytics.service';
+import { PartnersService } from '../partners/partners.service';
 import {
   createGrantRewardsPageHandler,
   deleteUserCascade,
@@ -1079,6 +1080,10 @@ export async function setupAdmin(
     'GrantRewards',
     resolveAdminComponent('components/grant-rewards'),
   );
+  const partnerLogoUploadComponent = componentLoader.add(
+    'PartnerLogoUpload',
+    resolveAdminComponent('partner-logo-upload'),
+  );
 
   const analyticsNavigation = { name: 'Аналитика', icon: 'Activity' };
   const appSettings = app.get(AppSettingsService);
@@ -1089,6 +1094,7 @@ export async function setupAdmin(
   const marketingCampaigns = app.get(MarketingCampaignsService);
   const marketingAnalytics = app.get(MarketingAnalyticsService);
   const rewards = app.get(RewardsService);
+  const partners = app.get(PartnersService);
 
   const admin = new AdminJS({
     rootPath: '/admin',
@@ -2139,10 +2145,80 @@ export async function setupAdmin(
             },
             logoUrl: {
               isRequired: false,
-              description: 'Прямая ссылка на логотип (PNG/SVG/WebP)',
+              description: 'Загрузи файл или вставь прямую ссылку',
+              components: {
+                edit: partnerLogoUploadComponent,
+                show: partnerLogoUploadComponent,
+              },
             },
             isActive: {
               isRequired: false,
+            },
+          },
+          actions: {
+            uploadLogo: {
+              actionType: 'record',
+              isVisible: false,
+              isAccessible: true,
+              handler: async (
+                request: { method?: string; payload?: Record<string, unknown> },
+                _response: unknown,
+                context: {
+                  record?: {
+                    params: Record<string, unknown>;
+                    toJSON: (admin?: unknown) => unknown;
+                  };
+                  resource: {
+                    findOne: (id: string) => Promise<{
+                      toJSON: (admin?: unknown) => unknown;
+                    } | null>;
+                  };
+                  currentAdmin?: unknown;
+                },
+              ) => {
+                const id = String(context.record?.params.id ?? '');
+                if (!id) {
+                  return {
+                    record: context.record?.toJSON(context.currentAdmin),
+                    notice: { message: 'Сначала сохрани партнёра', type: 'error' },
+                  };
+                }
+
+                const payload = request.payload ?? {};
+                const raw = String(payload.fileBase64 ?? '').trim();
+                const base64 = raw.includes(',') ? raw.split(',').pop() ?? '' : raw;
+                if (!base64) {
+                  return {
+                    record: context.record?.toJSON(context.currentAdmin),
+                    notice: { message: 'Файл не передан', type: 'error' },
+                  };
+                }
+
+                try {
+                  const uploaded = await partners.uploadLogo(id, {
+                    buffer: Buffer.from(base64, 'base64'),
+                    mimetype: String(payload.fileMime ?? 'image/png'),
+                    originalname: String(payload.fileName ?? 'logo.png'),
+                  });
+                  const fresh = await context.resource.findOne(id);
+                  return {
+                    record: fresh?.toJSON(context.currentAdmin) ?? context.record?.toJSON(context.currentAdmin),
+                    logoUrl: uploaded.logoUrl,
+                    notice: { message: 'Логотип загружен', type: 'success' },
+                  };
+                } catch (error) {
+                  return {
+                    record: context.record?.toJSON(context.currentAdmin),
+                    notice: {
+                      message:
+                        error instanceof Error
+                          ? error.message
+                          : 'Не удалось загрузить логотип',
+                      type: 'error',
+                    },
+                  };
+                }
+              },
             },
           },
         },

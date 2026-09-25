@@ -1,4 +1,5 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Param, Res } from '@nestjs/common';
+import type { Response } from 'express';
 
 import { PartnersService } from './partners.service';
 
@@ -10,5 +11,14 @@ export class PartnersController {
   @Get()
   list() {
     return this.partners.listPublic();
+  }
+
+  /** Стабильный URL логотипа (без протухающих signed S3 links). */
+  @Get(':id/logo')
+  async logo(@Param('id') id: string, @Res() res: Response) {
+    const asset = await this.partners.getLogoAsset(id);
+    res.setHeader('Content-Type', asset.contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+    res.send(asset.body);
   }
 }

@@ -134,7 +134,7 @@ export const ADMIN_LOCALE_RU = {
     href: 'Ссылка',
     mark: 'Буквы на плашке',
     accent: 'Цвет плашки',
-    logoUrl: 'URL логотипа',
+    logoUrl: 'Логотип',
     statusId: 'Статус',
     status: 'Статус',
     experienceTypeId: 'Тип опыта',
