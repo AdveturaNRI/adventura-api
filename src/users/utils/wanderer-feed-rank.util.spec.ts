@@ -78,6 +78,38 @@ describe('wanderer feed rank', () => {
     expect(compareWandererFeedRank(justSeen, idleRich, now)).toBeLessThan(0);
   });
 
+  it('does not bury a full profile from this morning under a thin visitor from two hours ago', () => {
+    const thinRecent = {
+      completion: completion({
+        about: 'Ищу сабъютыльника',
+        openToAnySystem: true,
+        systems: [],
+      }),
+      lastSeenAt: new Date(now - 2 * 60 * 60 * 1000),
+      updatedAt: new Date(now - 2 * 60 * 60 * 1000),
+      rewards: [] as const,
+      messageCount: 0,
+      callCount: 0,
+    };
+    const fullMorning = {
+      completion: completion({
+        roles: ['player', 'gm'],
+        hasProfileCard: true,
+        about: 'Деддо — перед не даёт бомжам совершать военные преступления',
+        description: 'Просто с кайфом играем в игры. Челленджи будут, но без злодейских ухмылок.',
+        systems: ['Dungeons & Dragons', 'Call of Cthulhu'],
+        readyToLearnNew: true,
+      }),
+      lastSeenAt: new Date(now - 8 * 60 * 60 * 1000),
+      updatedAt: new Date(now - 8 * 60 * 60 * 1000),
+      rewards: [{ badgeType: 'founding_dm' as const }, { badgeType: 'alpha_tester' as const }],
+      messageCount: 30,
+      callCount: 3,
+    };
+
+    expect(compareWandererFeedRank(fullMorning, thinRecent, now)).toBeLessThan(0);
+  });
+
   it('boosts people who actually write and call', () => {
     const seen = new Date(now - 20 * 60 * 1000);
     const quiet = {

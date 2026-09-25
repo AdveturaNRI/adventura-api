@@ -10,7 +10,9 @@ const BADGE_WEIGHT: Record<RewardBadgeTypeId, number> = {
   early_arrival: 1,
 };
 
-const ONLINE_HALF_LIFE_MS = 18 * 60 * 60 * 1000;
+/** Same calendar day / this morning vs a couple hours ago should not reshuffle the deck. */
+const ONLINE_PLATEAU_MS = 16 * 60 * 60 * 1000;
+const ONLINE_HALF_LIFE_MS = 60 * 60 * 60 * 1000;
 const ONLINE_FLOOR_MS = 14 * 24 * 60 * 60 * 1000;
 
 export type WandererFeedRankInput = {
@@ -52,7 +54,8 @@ function onlineFreshness(lastSeenAt: Date | null, updatedAt: Date, nowMs: number
   if (age >= ONLINE_FLOOR_MS) {
     return 0;
   }
-  return Math.exp(-age / ONLINE_HALF_LIFE_MS);
+  const afterPlateau = Math.max(0, age - ONLINE_PLATEAU_MS);
+  return Math.exp(-afterPlateau / ONLINE_HALF_LIFE_MS);
 }
 
 function rewardsScore(rewards: ReadonlyArray<{ badgeType: RewardBadgeTypeId }>): number {
@@ -95,7 +98,7 @@ export function wandererFeedRankScore(input: WandererFeedRankInput, nowMs = Date
   const rewards = rewardsScore(input.rewards);
   const activity = chatActivityScore(input.messageCount, input.callCount);
   const dice = logCap(input.diceRollCount ?? 0, 12);
-  return richness * 0.24 + online * 0.5 + rewards * 0.12 + activity * 0.1 + dice * 0.04;
+  return richness * 0.28 + online * 0.38 + rewards * 0.2 + activity * 0.1 + dice * 0.04;
 }
 
 export function compareWandererFeedRank(
