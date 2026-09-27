@@ -1101,9 +1101,7 @@ export class UsersService {
     const meta = await sharp(file.buffer, { failOn: 'none' }).metadata();
     const shortSide = Math.min(meta.width ?? 0, meta.height ?? 0);
     if (shortSide > 0 && shortSide < 600) {
-      throw new BadRequestException(
-        'Фото слишком мелкое для карточки анкеты. Загрузите изображение покрупнее (короткая сторона от 600 px).',
-      );
+      throw new BadRequestException('Фотография имеет слишком маленький размер');
     }
 
     const cardVariants = await this.imageProcessor.processImage(
