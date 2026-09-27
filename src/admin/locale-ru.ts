@@ -63,6 +63,9 @@ export const ADMIN_LOCALE_RU = {
     ExperienceType: 'Опыт',
     GameSystem: 'Системы',
     Partner: 'Партнёры',
+    AuthorProfile: 'Профили авторов',
+    AuthorPost: 'Публикации',
+    AuthorPostLike: 'Лайки публикаций',
     Country: 'Страны',
     City: 'Города',
     NotificationSoundPreset: 'Пресеты звуков',
@@ -107,6 +110,12 @@ export const ADMIN_LOCALE_RU = {
     systems: 'Системы',
     readyToLearnNew: 'Готов учить новое',
     openToAnySystem: 'Открыт к любой системе',
+    prefersFreeOnly: 'Только бесплатные игры',
+    gameCostFormat: 'Стоимость игр',
+    sessionPriceKind: 'Вид стоимости сессии',
+    sessionPriceMin: 'Стоимость сессии от',
+    sessionPriceMax: 'Стоимость сессии до',
+    playerPaymentFormat: 'Формат оплаты игрока',
     about: 'О себе',
     description: 'Описание',
     roles: 'Роли',
@@ -135,6 +144,23 @@ export const ADMIN_LOCALE_RU = {
     mark: 'Буквы на плашке',
     accent: 'Цвет плашки',
     logoUrl: 'Логотип',
+    authorProfileId: 'Профиль автора',
+    authorProfile: 'Профиль автора',
+    title: 'Заголовок',
+    content: 'Текст',
+    category: 'Категория',
+    categories: 'Категории',
+    contacts: 'Контакты',
+    views: 'Просмотры',
+    likesCount: 'Лайки',
+    isForSale: 'На продажу',
+    price: 'Цена',
+    currency: 'Валюта',
+    purchaseDescription: 'Описание покупки',
+    purchaseUrl: 'Ссылка на покупку',
+    filesMeta: 'Файлы (мета)',
+    deletedAt: 'Скрыто',
+    postId: 'Публикация',
     statusId: 'Статус',
     status: 'Статус',
     experienceTypeId: 'Тип опыта',
@@ -160,6 +186,25 @@ export const ADMIN_LOCALE_RU = {
     waveform: 'Волна',
   },
   resources: {
+    AuthorPost: {
+      labels: {
+        AuthorPost: 'Публикации',
+      },
+      actions: {
+        softDelete: 'Скрыть',
+        restore: 'Восстановить',
+      },
+    },
+    AuthorProfile: {
+      labels: {
+        AuthorProfile: 'Профили авторов',
+      },
+    },
+    AuthorPostLike: {
+      labels: {
+        AuthorPostLike: 'Лайки публикаций',
+      },
+    },
     UserReward: {
       labels: {
         UserReward: 'Награды',

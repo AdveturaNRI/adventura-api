@@ -21,6 +21,8 @@ function completion(overrides: Partial<QuestionnaireCompletionInput> = {}): Ques
     systems: ['D&D'],
     readyToLearnNew: false,
     openToAnySystem: false,
+    gameCostFormat: null,
+    playerPaymentFormat: 'free_only',
     ...overrides,
   };
 }
@@ -76,6 +78,76 @@ describe('wanderer feed rank', () => {
     };
 
     expect(compareWandererFeedRank(justSeen, idleRich, now)).toBeLessThan(0);
+  });
+
+  it('keeps a full idle profile out of the top vs a thin recent visitor', () => {
+    const thinRecent = {
+      completion: completion({ about: 'ок', openToAnySystem: true, systems: [] }),
+      lastSeenAt: new Date(now - 40 * 60 * 1000),
+      updatedAt: new Date(now - 40 * 60 * 1000),
+      rewards: [] as const,
+    };
+    const fullIdle = {
+      completion: completion({
+        roles: ['player', 'gm'],
+        hasProfileCard: true,
+        about: 'Ищу стабильный стол на длинную кампанию',
+        description: 'Много играю мастером и игроком, люблю песочницы и расследования. '.repeat(4),
+        systems: ['Dungeons & Dragons', 'Call of Cthulhu', 'Blades'],
+        readyToLearnNew: true,
+        citiesCount: 2,
+        experienceTypesCount: 2,
+      }),
+      lastSeenAt: new Date(now - 10 * 24 * 60 * 60 * 1000),
+      updatedAt: new Date(now - 10 * 24 * 60 * 60 * 1000),
+      rewards: [
+        { badgeType: 'founding_dm' as const },
+        { badgeType: 'alpha_tester' as const },
+        { badgeType: 'bug_hunter' as const },
+      ],
+      messageCount: 50,
+      callCount: 5,
+    };
+
+    expect(compareWandererFeedRank(thinRecent, fullIdle, now)).toBeLessThan(0);
+    expect(wandererFeedRankScore(fullIdle, now)).toBeLessThan(
+      wandererFeedRankScore(thinRecent, now) * 0.7,
+    );
+  });
+
+  it('ranks a richly filled same-day profile above a thin recent one without rewards', () => {
+    const thinRecent = {
+      completion: completion({
+        about: 'ок',
+        openToAnySystem: true,
+        systems: [],
+        description: null,
+        hasProfileCard: false,
+      }),
+      lastSeenAt: new Date(now - 30 * 60 * 1000),
+      updatedAt: new Date(now - 30 * 60 * 1000),
+      rewards: [] as const,
+    };
+    const richToday = {
+      completion: completion({
+        roles: ['player', 'gm'],
+        hasProfileCard: true,
+        about: 'Ищу стабильный стол на длинную кампанию',
+        description: 'Много играю мастером и игроком, люблю песочницы и расследования. '.repeat(4),
+        systems: ['Dungeons & Dragons', 'Call of Cthulhu', 'Blades'],
+        readyToLearnNew: true,
+        citiesCount: 2,
+        experienceTypesCount: 2,
+      }),
+      lastSeenAt: new Date(now - 6 * 60 * 60 * 1000),
+      updatedAt: new Date(now - 6 * 60 * 60 * 1000),
+      rewards: [] as const,
+    };
+
+    expect(compareWandererFeedRank(richToday, thinRecent, now)).toBeLessThan(0);
+    expect(questionnaireRichness(richToday.completion)).toBeGreaterThan(
+      questionnaireRichness(thinRecent.completion) + 0.15,
+    );
   });
 
   it('does not bury a full profile from this morning under a thin visitor from two hours ago', () => {

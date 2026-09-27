@@ -26,6 +26,7 @@ import {
 import { MarketingCampaignsService } from '../marketing/campaigns/marketing-campaigns.service';
 import { MarketingAnalyticsService } from '../marketing/analytics/marketing-analytics.service';
 import { PartnersService } from '../partners/partners.service';
+import { CREATIVITY_CATEGORIES } from '../authors/types/author.type';
 import {
   createGrantRewardsPageHandler,
   deleteUserCascade,
@@ -2333,6 +2334,224 @@ export async function setupAdmin(
         options: {
           navigation: { name: 'Награды', icon: 'Award' },
           listProperties: ['userId', 'kind', 'day', 'count'],
+        },
+      },
+      {
+        resource: { model: getModelByName('AuthorProfile'), client: prisma },
+        options: {
+          navigation: { name: 'Публикации', icon: 'Image' },
+          sort: { sortBy: 'updatedAt', direction: 'desc' },
+          listProperties: [
+            'id',
+            'user',
+            'description',
+            'categories',
+            'createdAt',
+            'updatedAt',
+          ],
+          filterProperties: ['userId', 'createdAt', 'updatedAt'],
+          editProperties: ['userId', 'description', 'categories', 'contacts'],
+          showProperties: [
+            'id',
+            'user',
+            'description',
+            'categories',
+            'contacts',
+            'createdAt',
+            'updatedAt',
+          ],
+          properties: {
+            description: {
+              type: 'textarea',
+            },
+            categories: {
+              description: 'Категории автора: arts, maps, materials, forGames, memes, other',
+            },
+            contacts: {
+              type: 'mixed',
+              description: 'JSON-массив контактов [{ type, value }]',
+            },
+            posts: { isVisible: false },
+          },
+        },
+      },
+      {
+        resource: { model: getModelByName('AuthorPost'), client: prisma },
+        options: {
+          navigation: { name: 'Публикации', icon: 'Image' },
+          sort: { sortBy: 'createdAt', direction: 'desc' },
+          listProperties: [
+            'id',
+            'title',
+            'authorProfile',
+            'category',
+            'views',
+            'likesCount',
+            'isForSale',
+            'deletedAt',
+            'createdAt',
+          ],
+          filterProperties: [
+            'category',
+            'isForSale',
+            'authorProfileId',
+            'deletedAt',
+            'createdAt',
+          ],
+          editProperties: [
+            'authorProfileId',
+            'title',
+            'content',
+            'category',
+            'isForSale',
+            'price',
+            'currency',
+            'purchaseDescription',
+            'purchaseUrl',
+            'filesMeta',
+            'deletedAt',
+          ],
+          showProperties: [
+            'id',
+            'authorProfile',
+            'title',
+            'content',
+            'category',
+            'views',
+            'likesCount',
+            'isForSale',
+            'price',
+            'currency',
+            'purchaseDescription',
+            'purchaseUrl',
+            'filesMeta',
+            'deletedAt',
+            'createdAt',
+            'updatedAt',
+          ],
+          properties: {
+            title: { isRequired: true },
+            content: { type: 'textarea' },
+            category: {
+              availableValues: CREATIVITY_CATEGORIES.map((value) => ({
+                value,
+                label:
+                  (
+                    {
+                      arts: 'Арт',
+                      maps: 'Карты',
+                      materials: 'Материалы',
+                      forGames: 'Для игр',
+                      memes: 'Мемы',
+                      other: 'Другое',
+                    } as Record<string, string>
+                  )[value] ?? value,
+              })),
+            },
+            purchaseDescription: { type: 'textarea' },
+            filesMeta: {
+              type: 'mixed',
+              description: 'Метаданные файлов [{ id, name, size, type, index }]',
+            },
+            views: { isVisible: { list: true, show: true, edit: false, filter: false } },
+            likesCount: { isVisible: { list: true, show: true, edit: false, filter: false } },
+            likes: { isVisible: false },
+          },
+          actions: {
+            softDelete: {
+              actionType: 'record',
+              icon: 'Delete',
+              guard: 'Публикация скроется из ленты (soft delete).',
+              isVisible: (context: { record?: { params: Record<string, unknown> } }) =>
+                !context.record?.params.deletedAt,
+              handler: async (
+                _request: unknown,
+                _response: unknown,
+                context: {
+                  record?: {
+                    params: Record<string, unknown>;
+                    update: (payload: Record<string, unknown>) => Promise<{
+                      toJSON: (admin?: unknown) => unknown;
+                    }>;
+                    toJSON: (admin?: unknown) => unknown;
+                  };
+                  currentAdmin?: unknown;
+                },
+              ) => {
+                const id = String(context.record?.params.id ?? '');
+                if (!id || !context.record) {
+                  return {
+                    record: context.record?.toJSON(context.currentAdmin),
+                    notice: { message: 'Публикация не найдена', type: 'error' },
+                  };
+                }
+                await prisma.authorPost.update({
+                  where: { id },
+                  data: { deletedAt: new Date() },
+                });
+                const updated = await context.record.update({
+                  deletedAt: new Date().toISOString(),
+                });
+                return {
+                  record: updated.toJSON(context.currentAdmin),
+                  notice: { message: 'Публикация скрыта', type: 'success' },
+                  redirectUrl: `/admin/resources/AuthorPost/records/${id}/show`,
+                };
+              },
+            },
+            restore: {
+              actionType: 'record',
+              icon: 'Reset',
+              guard: 'Вернуть публикацию в ленту?',
+              isVisible: (context: { record?: { params: Record<string, unknown> } }) =>
+                Boolean(context.record?.params.deletedAt),
+              handler: async (
+                _request: unknown,
+                _response: unknown,
+                context: {
+                  record?: {
+                    params: Record<string, unknown>;
+                    update: (payload: Record<string, unknown>) => Promise<{
+                      toJSON: (admin?: unknown) => unknown;
+                    }>;
+                    toJSON: (admin?: unknown) => unknown;
+                  };
+                  currentAdmin?: unknown;
+                },
+              ) => {
+                const id = String(context.record?.params.id ?? '');
+                if (!id || !context.record) {
+                  return {
+                    record: context.record?.toJSON(context.currentAdmin),
+                    notice: { message: 'Публикация не найдена', type: 'error' },
+                  };
+                }
+                await prisma.authorPost.update({
+                  where: { id },
+                  data: { deletedAt: null },
+                });
+                const updated = await context.record.update({ deletedAt: null });
+                return {
+                  record: updated.toJSON(context.currentAdmin),
+                  notice: { message: 'Публикация восстановлена', type: 'success' },
+                  redirectUrl: `/admin/resources/AuthorPost/records/${id}/show`,
+                };
+              },
+            },
+          },
+        },
+      },
+      {
+        resource: { model: getModelByName('AuthorPostLike'), client: prisma },
+        options: {
+          navigation: { name: 'Публикации', icon: 'Image' },
+          sort: { sortBy: 'createdAt', direction: 'desc' },
+          listProperties: ['postId', 'userId', 'createdAt'],
+          filterProperties: ['postId', 'userId', 'createdAt'],
+          actions: {
+            new: { isAccessible: false, isVisible: false },
+            edit: { isAccessible: false, isVisible: false },
+          },
         },
       },
       {

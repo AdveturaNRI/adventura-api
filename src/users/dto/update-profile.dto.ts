@@ -3,6 +3,7 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -14,6 +15,13 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import {
+  GAME_COST_FORMATS,
+  PLAYER_PAYMENT_FORMATS,
+  SESSION_PRICE_KINDS,
+  SESSION_PRICE_MAX,
+  SESSION_PRICE_MIN,
+} from '../types/questionnaire-payment';
 
 export class UpdateProfileDto {
   @IsOptional()
@@ -86,6 +94,40 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsBoolean()
   prefersFreeOnly?: boolean;
+
+  @IsOptional()
+  @Allow()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsIn([...GAME_COST_FORMATS], { message: 'Укажите формат оплаты игр' })
+  gameCostFormat?: (typeof GAME_COST_FORMATS)[number] | null;
+
+  @IsOptional()
+  @Allow()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsIn([...SESSION_PRICE_KINDS], { message: 'Укажите вид стоимости сессии' })
+  sessionPriceKind?: (typeof SESSION_PRICE_KINDS)[number] | null;
+
+  @IsOptional()
+  @Allow()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsInt()
+  @Min(SESSION_PRICE_MIN, { message: 'Стоимость должна быть больше нуля' })
+  @Max(SESSION_PRICE_MAX, { message: 'Стоимость слишком большая' })
+  sessionPriceMin?: number | null;
+
+  @IsOptional()
+  @Allow()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsInt()
+  @Min(SESSION_PRICE_MIN, { message: 'Стоимость должна быть больше нуля' })
+  @Max(SESSION_PRICE_MAX, { message: 'Стоимость слишком большая' })
+  sessionPriceMax?: number | null;
+
+  @IsOptional()
+  @Allow()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsIn([...PLAYER_PAYMENT_FORMATS], { message: 'Укажите формат оплаты' })
+  playerPaymentFormat?: (typeof PLAYER_PAYMENT_FORMATS)[number] | null;
 
   @IsOptional()
   @IsString()

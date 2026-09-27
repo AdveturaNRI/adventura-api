@@ -25,6 +25,11 @@ model User {
   readyToLearnNew             Boolean                    @default(false)
   openToAnySystem             Boolean                    @default(false)
   prefersFreeOnly             Boolean                    @default(false)
+  gameCostFormat              String?
+  sessionPriceKind            String?
+  sessionPriceMin             Int?
+  sessionPriceMax             Int?
+  playerPaymentFormat         String?
   about                       String?
   description                 String?
   roles                       String[]                   @default([])

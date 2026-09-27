@@ -33,19 +33,26 @@ function textWeight(value: string | null | undefined, softCap: number): number {
   return Math.min(1, length / softCap);
 }
 
-/** How much extra the person actually wrote, beyond the required checkboxes. */
+/** How filled the questionnaire actually is — extras matter more than bare eligibility. */
 export function questionnaireRichness(input: QuestionnaireCompletionInput): number {
   const required = calculateQuestionnaireCompletionPercent(input) / 100;
+  const namedSystems = input.systems.length;
   const extras =
-    (input.hasProfileCard ? 1 : 0) +
-    textWeight(input.about, 280) +
-    textWeight(input.description, 600) +
-    Math.min(1, input.systems.length / 4) +
-    Math.min(1, (input.citiesCount ?? 0) / 3) +
-    Math.min(1, input.experienceTypesCount / 3) +
-    Math.min(1, input.roles.length / 2);
+    (input.hasProfileCard ? 1.4 : 0) +
+    textWeight(input.about, 160) * 1.1 +
+    textWeight(input.description, 400) * 1.5 +
+    Math.min(1.2, namedSystems / 3) +
+    (namedSystems === 0 && (input.openToAnySystem || input.readyToLearnNew) ? 0.25 : 0) +
+    Math.min(1, (input.citiesCount ?? 0) / 2) +
+    Math.min(1, input.experienceTypesCount / 2) +
+    Math.min(1, input.roles.length / 2) +
+    (input.age != null ? 0.35 : 0);
 
-  return required * 0.7 + (extras / 7) * 0.3;
+  // Max of the weighted extras above ≈ 8.7
+  const extrasScore = Math.min(1, extras / 8.7);
+  const raw = required * 0.35 + extrasScore * 0.65;
+  // Stretch: thin-but-eligible stays mid, richly filled shoots up.
+  return Math.pow(raw, 1.35);
 }
 
 function onlineFreshness(lastSeenAt: Date | null, updatedAt: Date, nowMs: number): number {
@@ -98,7 +105,12 @@ export function wandererFeedRankScore(input: WandererFeedRankInput, nowMs = Date
   const rewards = rewardsScore(input.rewards);
   const activity = chatActivityScore(input.messageCount, input.callCount);
   const dice = logCap(input.diceRollCount ?? 0, 12);
-  return richness * 0.28 + online * 0.38 + rewards * 0.2 + activity * 0.1 + dice * 0.04;
+
+  // Content can be great, but without recent presence it must not sit in the tops.
+  const content =
+    richness * 0.58 + rewards * 0.18 + activity * 0.14 + dice * 0.04;
+  const presenceGate = 0.12 + 0.88 * online;
+  return content * presenceGate + online * 0.1;
 }
 
 export function compareWandererFeedRank(

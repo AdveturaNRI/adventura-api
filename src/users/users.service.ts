@@ -26,6 +26,13 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { RewardsService } from '../rewards/rewards.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import {
+  QuestionnairePaymentError,
+  normalizeQuestionnairePayment,
+  type GameCostFormat,
+  type PlayerPaymentFormat,
+  type SessionPriceKind,
+} from './types/questionnaire-payment';
 import type {
   WandererBucket,
 } from './dto/wanderer-reaction.dto';
@@ -55,6 +62,11 @@ const USER_PROFILE_SELECT = {
   readyToLearnNew: true,
   openToAnySystem: true,
   prefersFreeOnly: true,
+  gameCostFormat: true,
+  sessionPriceKind: true,
+  sessionPriceMin: true,
+  sessionPriceMax: true,
+  playerPaymentFormat: true,
   about: true,
   description: true,
   roles: true,
@@ -163,6 +175,11 @@ type UserWithRelations = {
   readyToLearnNew: boolean;
   openToAnySystem: boolean;
   prefersFreeOnly: boolean;
+  gameCostFormat: string | null;
+  sessionPriceKind: string | null;
+  sessionPriceMin: number | null;
+  sessionPriceMax: number | null;
+  playerPaymentFormat: string | null;
   about: string | null;
   description: string | null;
   roles: string[];
@@ -886,6 +903,57 @@ export class UsersService {
       }
     }
 
+    const paymentTouched =
+      dto.gameCostFormat !== undefined ||
+      dto.sessionPriceKind !== undefined ||
+      dto.sessionPriceMin !== undefined ||
+      dto.sessionPriceMax !== undefined ||
+      dto.playerPaymentFormat !== undefined;
+
+    let paymentUpdate:
+      | {
+          gameCostFormat: GameCostFormat | null;
+          sessionPriceKind: SessionPriceKind | null;
+          sessionPriceMin: number | null;
+          sessionPriceMax: number | null;
+          playerPaymentFormat: PlayerPaymentFormat | null;
+          prefersFreeOnly?: boolean;
+        }
+      | undefined;
+
+    if (paymentTouched) {
+      try {
+        paymentUpdate = normalizeQuestionnairePayment({
+          gameCostFormat:
+            dto.gameCostFormat !== undefined
+              ? dto.gameCostFormat
+              : (previous.gameCostFormat as GameCostFormat | null),
+          sessionPriceKind:
+            dto.sessionPriceKind !== undefined
+              ? dto.sessionPriceKind
+              : (previous.sessionPriceKind as SessionPriceKind | null),
+          sessionPriceMin:
+            dto.sessionPriceMin !== undefined ? dto.sessionPriceMin : previous.sessionPriceMin,
+          sessionPriceMax:
+            dto.sessionPriceMax !== undefined ? dto.sessionPriceMax : previous.sessionPriceMax,
+          playerPaymentFormat:
+            dto.playerPaymentFormat !== undefined
+              ? dto.playerPaymentFormat
+              : (previous.playerPaymentFormat as PlayerPaymentFormat | null),
+        });
+      } catch (error) {
+        if (error instanceof QuestionnairePaymentError) {
+          throw new BadRequestException(error.message);
+        }
+
+        throw error;
+      }
+
+      if (dto.playerPaymentFormat !== undefined) {
+        paymentUpdate.prefersFreeOnly = dto.playerPaymentFormat === 'free_only';
+      }
+    }
+
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: {
@@ -898,7 +966,16 @@ export class UsersService {
         systems: resolvedSystems,
         readyToLearnNew: dto.readyToLearnNew,
         openToAnySystem: dto.openToAnySystem,
-        prefersFreeOnly: dto.prefersFreeOnly,
+        prefersFreeOnly: paymentUpdate?.prefersFreeOnly ?? dto.prefersFreeOnly,
+        ...(paymentUpdate
+          ? {
+              gameCostFormat: paymentUpdate.gameCostFormat,
+              sessionPriceKind: paymentUpdate.sessionPriceKind,
+              sessionPriceMin: paymentUpdate.sessionPriceMin,
+              sessionPriceMax: paymentUpdate.sessionPriceMax,
+              playerPaymentFormat: paymentUpdate.playerPaymentFormat,
+            }
+          : {}),
         about: dto.about !== undefined ? dto.about.trim() || null : undefined,
         description:
           dto.description !== undefined && dto.description !== null
@@ -1108,6 +1185,11 @@ export class UsersService {
         readyToLearnNew: false,
         openToAnySystem: false,
         prefersFreeOnly: false,
+        gameCostFormat: null,
+        sessionPriceKind: null,
+        sessionPriceMin: null,
+        sessionPriceMax: null,
+        playerPaymentFormat: null,
         roles: [],
         questionnaireStep: 0,
         statuses: {
@@ -1271,6 +1353,11 @@ export class UsersService {
       readyToLearnNew: user.readyToLearnNew,
       openToAnySystem: user.openToAnySystem,
       prefersFreeOnly: user.prefersFreeOnly,
+      gameCostFormat: (user.gameCostFormat as GameCostFormat | null) ?? null,
+      sessionPriceKind: (user.sessionPriceKind as SessionPriceKind | null) ?? null,
+      sessionPriceMin: user.sessionPriceMin,
+      sessionPriceMax: user.sessionPriceMax,
+      playerPaymentFormat: (user.playerPaymentFormat as PlayerPaymentFormat | null) ?? null,
       about: user.about,
       description: user.description,
       roles: user.roles,
@@ -1368,6 +1455,11 @@ export class UsersService {
       location: cityNames.length > 0 ? cityNames.join(' · ') : user.location,
       cities: cityNames,
       playsOnline: user.playsOnline,
+      gameCostFormat: (user.gameCostFormat as GameCostFormat | null) ?? null,
+      sessionPriceKind: (user.sessionPriceKind as SessionPriceKind | null) ?? null,
+      sessionPriceMin: user.sessionPriceMin,
+      sessionPriceMax: user.sessionPriceMax,
+      playerPaymentFormat: (user.playerPaymentFormat as PlayerPaymentFormat | null) ?? null,
       experienceLabel: user.experiences[0]?.experienceType.name ?? null,
       profileCard: hasProfileCard ? profileCardUrls : null,
       blockedByMe: options?.blockedByMe ?? false,

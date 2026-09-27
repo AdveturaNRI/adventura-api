@@ -46,8 +46,10 @@ export class ClubsController {
     return this.clubsService.listMine(user!.id);
   }
 
+  // Публичная карта клубов: поиск города / reverse для «где я» без логина
+  // (как listMap). Создание клуба и так за JWT — там токен будет.
   @Get('geocode/suggest')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
   suggestGeocode(@Query() query: GeocodeSuggestQueryDto) {
     return this.clubsService.suggestGeocode(
       query.q,
@@ -58,13 +60,13 @@ export class ClubsController {
   }
 
   @Get('geocode')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
   geocode(@Query() query: GeocodeQueryDto) {
     return this.clubsService.geocode(query.q, query.countrycodes ?? 'ru');
   }
 
   @Get('geocode/reverse')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
   reverseGeocode(@Query() query: GeocodeReverseQueryDto) {
     return this.clubsService.reverseGeocode(query.lat, query.lng);
   }

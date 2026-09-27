@@ -32,6 +32,11 @@ export type UserProfile = {
   readyToLearnNew: boolean;
   openToAnySystem: boolean;
   prefersFreeOnly: boolean;
+  gameCostFormat: 'free' | 'paid' | 'both' | null;
+  sessionPriceKind: 'fixed' | 'from' | 'range' | null;
+  sessionPriceMin: number | null;
+  sessionPriceMax: number | null;
+  playerPaymentFormat: 'free_only' | 'free_and_paid' | null;
   about: string | null;
   description: string | null;
   roles: string[];
