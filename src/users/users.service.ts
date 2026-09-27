@@ -7,6 +7,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { MessageKind, WandererReactionType } from '@prisma/client';
+import sharp from 'sharp';
 
 import { ImageProcessorService } from '../image/image-processor.service';
 import {
@@ -1095,6 +1096,14 @@ export class UsersService {
   ): Promise<UserProfile> {
     if (!file) {
       throw new BadRequestException('Файл не передан');
+    }
+
+    const meta = await sharp(file.buffer, { failOn: 'none' }).metadata();
+    const shortSide = Math.min(meta.width ?? 0, meta.height ?? 0);
+    if (shortSide > 0 && shortSide < 600) {
+      throw new BadRequestException(
+        'Фото слишком мелкое для карточки анкеты. Загрузите изображение покрупнее (короткая сторона от 600 px).',
+      );
     }
 
     const cardVariants = await this.imageProcessor.processImage(

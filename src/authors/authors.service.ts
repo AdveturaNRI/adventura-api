@@ -566,9 +566,9 @@ export class AuthorsService {
     const cardUrls = await this.mediaService.getCollectionUrls(cardMedia);
     return (
       cardUrls.card ??
-      cardUrls.cardThumb ??
-      cardUrls.large ??
       cardUrls.original ??
+      cardUrls.large ??
+      cardUrls.cardThumb ??
       ''
     );
   }
