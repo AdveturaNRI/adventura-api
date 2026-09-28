@@ -130,6 +130,28 @@ export class UpdateProfileDto {
   playerPaymentFormat?: (typeof PLAYER_PAYMENT_FORMATS)[number] | null;
 
   @IsOptional()
+  @Allow()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsIn([...SESSION_PRICE_KINDS], { message: 'Укажите вид бюджета игрока' })
+  playerBudgetKind?: (typeof SESSION_PRICE_KINDS)[number] | null;
+
+  @IsOptional()
+  @Allow()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsInt()
+  @Min(SESSION_PRICE_MIN, { message: 'Стоимость должна быть больше нуля' })
+  @Max(SESSION_PRICE_MAX, { message: 'Стоимость слишком большая' })
+  playerBudgetMin?: number | null;
+
+  @IsOptional()
+  @Allow()
+  @ValidateIf((_, value) => value !== null && value !== undefined)
+  @IsInt()
+  @Min(SESSION_PRICE_MIN, { message: 'Стоимость должна быть больше нуля' })
+  @Max(SESSION_PRICE_MAX, { message: 'Стоимость слишком большая' })
+  playerBudgetMax?: number | null;
+
+  @IsOptional()
   @IsString()
   @MaxLength(1000)
   about?: string;

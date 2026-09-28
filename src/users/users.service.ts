@@ -68,6 +68,9 @@ const USER_PROFILE_SELECT = {
   sessionPriceMin: true,
   sessionPriceMax: true,
   playerPaymentFormat: true,
+  playerBudgetKind: true,
+  playerBudgetMin: true,
+  playerBudgetMax: true,
   about: true,
   description: true,
   roles: true,
@@ -181,6 +184,9 @@ type UserWithRelations = {
   sessionPriceMin: number | null;
   sessionPriceMax: number | null;
   playerPaymentFormat: string | null;
+  playerBudgetKind: string | null;
+  playerBudgetMin: number | null;
+  playerBudgetMax: number | null;
   about: string | null;
   description: string | null;
   roles: string[];
@@ -909,7 +915,10 @@ export class UsersService {
       dto.sessionPriceKind !== undefined ||
       dto.sessionPriceMin !== undefined ||
       dto.sessionPriceMax !== undefined ||
-      dto.playerPaymentFormat !== undefined;
+      dto.playerPaymentFormat !== undefined ||
+      dto.playerBudgetKind !== undefined ||
+      dto.playerBudgetMin !== undefined ||
+      dto.playerBudgetMax !== undefined;
 
     let paymentUpdate:
       | {
@@ -918,6 +927,9 @@ export class UsersService {
           sessionPriceMin: number | null;
           sessionPriceMax: number | null;
           playerPaymentFormat: PlayerPaymentFormat | null;
+          playerBudgetKind: SessionPriceKind | null;
+          playerBudgetMin: number | null;
+          playerBudgetMax: number | null;
           prefersFreeOnly?: boolean;
         }
       | undefined;
@@ -941,6 +953,14 @@ export class UsersService {
             dto.playerPaymentFormat !== undefined
               ? dto.playerPaymentFormat
               : (previous.playerPaymentFormat as PlayerPaymentFormat | null),
+          playerBudgetKind:
+            dto.playerBudgetKind !== undefined
+              ? dto.playerBudgetKind
+              : (previous.playerBudgetKind as SessionPriceKind | null),
+          playerBudgetMin:
+            dto.playerBudgetMin !== undefined ? dto.playerBudgetMin : previous.playerBudgetMin,
+          playerBudgetMax:
+            dto.playerBudgetMax !== undefined ? dto.playerBudgetMax : previous.playerBudgetMax,
         });
       } catch (error) {
         if (error instanceof QuestionnairePaymentError) {
@@ -975,6 +995,9 @@ export class UsersService {
               sessionPriceMin: paymentUpdate.sessionPriceMin,
               sessionPriceMax: paymentUpdate.sessionPriceMax,
               playerPaymentFormat: paymentUpdate.playerPaymentFormat,
+              playerBudgetKind: paymentUpdate.playerBudgetKind,
+              playerBudgetMin: paymentUpdate.playerBudgetMin,
+              playerBudgetMax: paymentUpdate.playerBudgetMax,
             }
           : {}),
         about: dto.about !== undefined ? dto.about.trim() || null : undefined,
@@ -1197,6 +1220,9 @@ export class UsersService {
         sessionPriceMin: null,
         sessionPriceMax: null,
         playerPaymentFormat: null,
+        playerBudgetKind: null,
+        playerBudgetMin: null,
+        playerBudgetMax: null,
         roles: [],
         questionnaireStep: 0,
         statuses: {
@@ -1365,6 +1391,9 @@ export class UsersService {
       sessionPriceMin: user.sessionPriceMin,
       sessionPriceMax: user.sessionPriceMax,
       playerPaymentFormat: (user.playerPaymentFormat as PlayerPaymentFormat | null) ?? null,
+      playerBudgetKind: (user.playerBudgetKind as SessionPriceKind | null) ?? null,
+      playerBudgetMin: user.playerBudgetMin,
+      playerBudgetMax: user.playerBudgetMax,
       about: user.about,
       description: user.description,
       roles: user.roles,
@@ -1467,6 +1496,9 @@ export class UsersService {
       sessionPriceMin: user.sessionPriceMin,
       sessionPriceMax: user.sessionPriceMax,
       playerPaymentFormat: (user.playerPaymentFormat as PlayerPaymentFormat | null) ?? null,
+      playerBudgetKind: (user.playerBudgetKind as SessionPriceKind | null) ?? null,
+      playerBudgetMin: user.playerBudgetMin,
+      playerBudgetMax: user.playerBudgetMax,
       experienceLabel: user.experiences[0]?.experienceType.name ?? null,
       profileCard: hasProfileCard ? profileCardUrls : null,
       blockedByMe: options?.blockedByMe ?? false,

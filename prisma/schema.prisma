@@ -30,6 +30,9 @@ model User {
   sessionPriceMin             Int?
   sessionPriceMax             Int?
   playerPaymentFormat         String?
+  playerBudgetKind            String?
+  playerBudgetMin             Int?
+  playerBudgetMax             Int?
   about                       String?
   description                 String?
   roles                       String[]                   @default([])

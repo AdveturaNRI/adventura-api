@@ -35,7 +35,6 @@ const SALT_ROUNDS = 10;
 const GUEST_EMAIL_RE = /^guest_[a-f0-9]+@guest\.adventura$/i;
 const USER_ENTITY_TYPE = 'User';
 const AVATAR_COLLECTION = 'avatar';
-const PROFILE_CARD_COLLECTION = 'profileCard';
 const MAX_OAUTH_AVATAR_BYTES = 8 * 1024 * 1024;
 
 const USER_SELECT = {
@@ -477,15 +476,12 @@ export class OAuthService {
         return;
       }
 
+      // Avatar only — OAuth photos are often ~200px and look broken as profileCard.
+      // The questionnaire photo still comes from a normal upload (min short side 600).
       const avatarVariants = await this.imageProcessor.processImage(
         buffer,
         mimeType,
         ['thumb', 'small', 'medium', 'large'],
-      );
-      const cardVariants = await this.imageProcessor.processImage(
-        buffer,
-        mimeType,
-        ['cardThumb', 'card', 'original'],
       );
 
       await this.mediaService.replaceCollection(
@@ -495,14 +491,6 @@ export class OAuthService {
           collection: AVATAR_COLLECTION,
         },
         avatarVariants,
-      );
-      await this.mediaService.replaceCollection(
-        {
-          entityType: USER_ENTITY_TYPE,
-          entityId: userId,
-          collection: PROFILE_CARD_COLLECTION,
-        },
-        cardVariants,
       );
 
       await this.prisma.user.update({

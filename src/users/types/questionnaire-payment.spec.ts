@@ -12,6 +12,9 @@ describe('normalizeQuestionnairePayment', () => {
         sessionPriceMin: 1500,
         sessionPriceMax: null,
         playerPaymentFormat: null,
+        playerBudgetKind: 'fixed',
+        playerBudgetMin: 500,
+        playerBudgetMax: null,
       }),
     ).toEqual({
       gameCostFormat: null,
@@ -19,6 +22,9 @@ describe('normalizeQuestionnairePayment', () => {
       sessionPriceMin: null,
       sessionPriceMax: null,
       playerPaymentFormat: null,
+      playerBudgetKind: null,
+      playerBudgetMin: null,
+      playerBudgetMax: null,
     });
   });
 
@@ -30,6 +36,9 @@ describe('normalizeQuestionnairePayment', () => {
         sessionPriceMin: 1500,
         sessionPriceMax: 2500,
         playerPaymentFormat: 'free_only',
+        playerBudgetKind: 'fixed',
+        playerBudgetMin: 500,
+        playerBudgetMax: null,
       }),
     ).toEqual({
       gameCostFormat: 'free',
@@ -37,6 +46,9 @@ describe('normalizeQuestionnairePayment', () => {
       sessionPriceMin: null,
       sessionPriceMax: null,
       playerPaymentFormat: 'free_only',
+      playerBudgetKind: null,
+      playerBudgetMin: null,
+      playerBudgetMax: null,
     });
   });
 
@@ -55,6 +67,49 @@ describe('normalizeQuestionnairePayment', () => {
       sessionPriceMin: null,
       sessionPriceMax: null,
       playerPaymentFormat: 'free_and_paid',
+      playerBudgetKind: null,
+      playerBudgetMin: null,
+      playerBudgetMax: null,
+    });
+  });
+
+  it('stores player budget when free_and_paid and clears it otherwise', () => {
+    expect(
+      normalizeQuestionnairePayment({
+        gameCostFormat: null,
+        playerPaymentFormat: 'free_and_paid',
+        playerBudgetKind: 'range',
+        playerBudgetMin: 500,
+        playerBudgetMax: 2000,
+      }),
+    ).toEqual({
+      gameCostFormat: null,
+      sessionPriceKind: null,
+      sessionPriceMin: null,
+      sessionPriceMax: null,
+      playerPaymentFormat: 'free_and_paid',
+      playerBudgetKind: 'range',
+      playerBudgetMin: 500,
+      playerBudgetMax: 2000,
+    });
+
+    expect(
+      normalizeQuestionnairePayment({
+        gameCostFormat: null,
+        playerPaymentFormat: 'free_only',
+        playerBudgetKind: 'range',
+        playerBudgetMin: 500,
+        playerBudgetMax: 2000,
+      }),
+    ).toEqual({
+      gameCostFormat: null,
+      sessionPriceKind: null,
+      sessionPriceMin: null,
+      sessionPriceMax: null,
+      playerPaymentFormat: 'free_only',
+      playerBudgetKind: null,
+      playerBudgetMin: null,
+      playerBudgetMax: null,
     });
   });
 
@@ -73,6 +128,9 @@ describe('normalizeQuestionnairePayment', () => {
       sessionPriceMin: 1500,
       sessionPriceMax: 2500,
       playerPaymentFormat: null,
+      playerBudgetKind: null,
+      playerBudgetMin: null,
+      playerBudgetMax: null,
     });
 
     expect(() =>

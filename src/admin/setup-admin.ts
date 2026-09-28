@@ -2154,14 +2154,18 @@ export async function setupAdmin(
                 _request: unknown,
                 _response: unknown,
                 context: {
-                  record?: { params: Record<string, unknown> };
+                  record?: {
+                    params: Record<string, unknown>;
+                    toJSON: (admin?: unknown) => unknown;
+                  };
                   currentAdmin?: unknown;
                 },
               ) => {
+                const recordJson = () => context.record?.toJSON(context.currentAdmin);
                 const name = String(context.record?.params.name ?? '').trim();
                 if (!name) {
                   return {
-                    record: context.record,
+                    record: recordJson(),
                     notice: { message: 'Нет названия системы', type: 'error' },
                   };
                 }
@@ -2174,7 +2178,9 @@ export async function setupAdmin(
                       ? ` и ещё ${result.attachedNicknames.length - 12}`
                       : '';
                   return {
-                    record: context.record,
+                    // Snapshot before promote: empty customs are deleted and must
+                    // not be re-fetched (that used to 500 the AdminJS action).
+                    record: recordJson(),
                     notice: {
                       message: `«${result.name}» в официальных. Юзеров: ${result.attachedNicknames.length}${
                         nicknames ? ` (${nicknames}${more})` : ''
@@ -2185,7 +2191,7 @@ export async function setupAdmin(
                   };
                 } catch (error) {
                   return {
-                    record: context.record,
+                    record: recordJson(),
                     notice: {
                       message:
                         error instanceof Error

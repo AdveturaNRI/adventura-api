@@ -15,6 +15,9 @@ export type QuestionnaireCompletionInput = {
   openToAnySystem: boolean;
   gameCostFormat?: string | null;
   playerPaymentFormat?: string | null;
+  playerBudgetKind?: string | null;
+  playerBudgetMin?: number | null;
+  playerBudgetMax?: number | null;
 };
 
 function hasLocation(input: QuestionnaireCompletionInput): boolean {
@@ -33,8 +36,37 @@ function hasGameCost(input: QuestionnaireCompletionInput): boolean {
   return !hasMasterRole(input.roles) || Boolean(input.gameCostFormat);
 }
 
+function hasFilledPlayerBudget(input: QuestionnaireCompletionInput): boolean {
+  const min =
+    typeof input.playerBudgetMin === 'number' && Number.isFinite(input.playerBudgetMin)
+      ? input.playerBudgetMin
+      : null;
+  const max =
+    typeof input.playerBudgetMax === 'number' && Number.isFinite(input.playerBudgetMax)
+      ? input.playerBudgetMax
+      : null;
+
+  if (input.playerBudgetKind === 'range') {
+    return min != null && max != null && min <= max;
+  }
+
+  return min != null && min > 0;
+}
+
 function hasPlayerPayment(input: QuestionnaireCompletionInput): boolean {
-  return !hasPlayerRole(input.roles) || Boolean(input.playerPaymentFormat);
+  if (!hasPlayerRole(input.roles)) {
+    return true;
+  }
+
+  if (!input.playerPaymentFormat) {
+    return false;
+  }
+
+  if (input.playerPaymentFormat === 'free_and_paid') {
+    return hasFilledPlayerBudget(input);
+  }
+
+  return input.playerPaymentFormat === 'free_only';
 }
 
 /** Only required questionnaire fields count toward completion %. */
@@ -69,6 +101,9 @@ export function buildQuestionnaireCompletionInput(
     openToAnySystem: boolean;
     gameCostFormat?: string | null;
     playerPaymentFormat?: string | null;
+    playerBudgetKind?: string | null;
+    playerBudgetMin?: number | null;
+    playerBudgetMax?: number | null;
   },
   hasProfileCard: boolean,
 ): QuestionnaireCompletionInput {
@@ -89,6 +124,9 @@ export function buildQuestionnaireCompletionInput(
     openToAnySystem: user.openToAnySystem,
     gameCostFormat: user.gameCostFormat ?? null,
     playerPaymentFormat: user.playerPaymentFormat ?? null,
+    playerBudgetKind: user.playerBudgetKind ?? null,
+    playerBudgetMin: user.playerBudgetMin ?? null,
+    playerBudgetMax: user.playerBudgetMax ?? null,
   };
 }
 

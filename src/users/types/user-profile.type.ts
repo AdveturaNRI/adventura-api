@@ -37,6 +37,9 @@ export type UserProfile = {
   sessionPriceMin: number | null;
   sessionPriceMax: number | null;
   playerPaymentFormat: 'free_only' | 'free_and_paid' | null;
+  playerBudgetKind: 'fixed' | 'from' | 'range' | null;
+  playerBudgetMin: number | null;
+  playerBudgetMax: number | null;
   about: string | null;
   description: string | null;
   roles: string[];
