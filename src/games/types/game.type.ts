@@ -36,6 +36,9 @@ export type GameListItem = {
   pendingApplicationsCount: number;
   owner: GameOwnerSummary | null;
   viewerRelation: GameViewerRelation;
+  bumpedAt: string;
+  /** ISO timestamp when bump is allowed again; null when available now. Owner-only. */
+  bumpAvailableAt: string | null;
   createdAt: string;
   updatedAt: string;
 };

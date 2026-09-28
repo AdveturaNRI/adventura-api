@@ -53,6 +53,8 @@ const GAME_ENTITY_TYPE = 'Game';
 const COVER_COLLECTION = 'cover';
 const USER_ENTITY_TYPE = 'User';
 const AVATAR_COLLECTION = 'avatar';
+/** How often an owner may raise a listing to the top of the feed. */
+const GAME_BUMP_COOLDOWN_MS = 12 * 60 * 60 * 1000;
 
 const GAME_SELECT = {
   id: true,
@@ -69,6 +71,7 @@ const GAME_SELECT = {
   priceRub: true,
   beginnersWelcome: true,
   minAge: true,
+  bumpedAt: true,
   createdAt: true,
   updatedAt: true,
   city: {
@@ -114,6 +117,7 @@ type GameRow = {
   priceRub: number | null;
   beginnersWelcome: boolean;
   minAge: number | null;
+  bumpedAt: Date;
   createdAt: Date;
   updatedAt: Date;
   city: { id: string; name: string; region: string | null } | null;
@@ -139,7 +143,7 @@ export class GamesService {
     const games = await this.prisma.game.findMany({
       where: { ownerId },
       select: GAME_SELECT,
-      orderBy: [{ updatedAt: 'desc' }],
+      orderBy: [{ bumpedAt: 'desc' }, { updatedAt: 'desc' }],
     });
 
     return Promise.all(
@@ -282,7 +286,7 @@ export class GamesService {
           },
         },
       },
-      orderBy: [{ updatedAt: 'desc' }],
+      orderBy: [{ bumpedAt: 'desc' }, { updatedAt: 'desc' }],
       take: 200,
     });
 
@@ -311,22 +315,21 @@ export class GamesService {
     );
     const playerGameIds = new Set(myPlayers.map((item) => item.gameId));
 
-    const withSchedule = withSeats
-      .filter((game) => game.scheduledAt != null)
-      .sort((a, b) => {
-        const aTime = a.scheduledAt!.getTime();
-        const bTime = b.scheduledAt!.getTime();
-        if (aTime !== bTime) {
-          return aTime - bTime;
-        }
-        return b.updatedAt.getTime() - a.updatedAt.getTime();
-      });
-    const withoutSchedule = withSeats
-      .filter((game) => game.scheduledAt == null)
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    const ranked = [...withSeats].sort((a, b) => {
+      const bumped = b.bumpedAt.getTime() - a.bumpedAt.getTime();
+      if (bumped !== 0) {
+        return bumped;
+      }
+      const aTime = a.scheduledAt?.getTime() ?? Number.POSITIVE_INFINITY;
+      const bTime = b.scheduledAt?.getTime() ?? Number.POSITIVE_INFINITY;
+      if (aTime !== bTime) {
+        return aTime - bTime;
+      }
+      return b.updatedAt.getTime() - a.updatedAt.getTime();
+    });
 
     return Promise.all(
-      [...withSchedule, ...withoutSchedule].slice(0, 100).map((game) => {
+      ranked.slice(0, 100).map((game) => {
         let viewerRelation: GameViewerRelation = 'none';
         if (viewerId && game.ownerId === viewerId) {
           viewerRelation = 'owner';
@@ -751,6 +754,49 @@ export class GamesService {
         },
       });
     }
+
+    return this.getManage(ownerId, gameId);
+  }
+
+  async bump(
+    ownerId: string,
+    gameId: string,
+  ): Promise<GameManagePayload> {
+    await this.requireOwnedGame(ownerId, gameId);
+
+    const current = await this.prisma.game.findFirst({
+      where: { id: gameId, ownerId },
+      select: {
+        status: true,
+        bumpedAt: true,
+      },
+    });
+
+    if (!current) {
+      throw new NotFoundException('Игра не найдена');
+    }
+
+    if (current.status === GameStatus.FINISHED) {
+      throw new BadRequestException('Завершённую игру нельзя поднять в ленте');
+    }
+
+    const nextAvailableAt = new Date(
+      current.bumpedAt.getTime() + GAME_BUMP_COOLDOWN_MS,
+    );
+    if (nextAvailableAt.getTime() > Date.now()) {
+      throw new BadRequestException(
+        `Поднять стол можно снова ${this.formatBumpReadyHint(nextAvailableAt)}`,
+      );
+    }
+
+    const now = new Date();
+    await this.prisma.game.update({
+      where: { id: gameId },
+      data: {
+        bumpedAt: now,
+        updatedAt: now,
+      },
+    });
 
     return this.getManage(ownerId, gameId);
   }
@@ -1499,8 +1545,40 @@ export class GamesService {
       pendingApplicationsCount: options?.hidePendingCount ? 0 : game._count.applications,
       owner,
       viewerRelation: options?.viewerRelation ?? 'none',
+      bumpedAt: game.bumpedAt.toISOString(),
+      bumpAvailableAt: this.resolveBumpAvailableAt(
+        game.bumpedAt,
+        options?.viewerRelation ?? 'none',
+      ),
       createdAt: game.createdAt.toISOString(),
       updatedAt: game.updatedAt.toISOString(),
     };
+  }
+
+  private resolveBumpAvailableAt(
+    bumpedAt: Date,
+    viewerRelation: GameViewerRelation,
+  ): string | null {
+    if (viewerRelation !== 'owner') {
+      return null;
+    }
+    const next = bumpedAt.getTime() + GAME_BUMP_COOLDOWN_MS;
+    if (next <= Date.now()) {
+      return null;
+    }
+    return new Date(next).toISOString();
+  }
+
+  private formatBumpReadyHint(at: Date): string {
+    try {
+      return at.toLocaleString('ru-RU', {
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return at.toISOString();
+    }
   }
 }

@@ -90,6 +90,12 @@ export class GamesController {
     return this.gamesService.updateStatus(user!.id, id, dto);
   }
 
+  @Post(':id/bump')
+  @UseGuards(JwtAuthGuard)
+  bump(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.gamesService.bump(user!.id, id);
+  }
+
   @Patch(':id')
   @UseGuards(JwtAuthGuard)
   update(
