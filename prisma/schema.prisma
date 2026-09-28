@@ -266,6 +266,7 @@ model Game {
   experienceType   ExperienceType?   @relation(fields: [experienceTypeId], references: [id], onDelete: SetNull)
   beginnersWelcome Boolean           @default(false)
   minAge           Int?
+  bumpedAt         DateTime          @default(now())
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   applications     GameApplication[]
@@ -278,6 +279,7 @@ model Game {
   @@index([clubId])
   @@index([scheduledAt])
   @@index([status])
+  @@index([status, bumpedAt])
   @@map("games")
 }
 

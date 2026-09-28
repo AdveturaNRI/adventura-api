@@ -62,6 +62,7 @@ export const ADMIN_LOCALE_RU = {
     Status: 'Статусы',
     ExperienceType: 'Опыт',
     GameSystem: 'Системы',
+    UserGameSystem: 'Системы сообщества',
     Partner: 'Партнёры',
     AuthorProfile: 'Профили авторов',
     AuthorPost: 'Публикации',
@@ -186,6 +187,19 @@ export const ADMIN_LOCALE_RU = {
     waveform: 'Волна',
   },
   resources: {
+    UserGameSystem: {
+      labels: {
+        UserGameSystem: 'Системы сообщества',
+      },
+      actions: {
+        promoteOfficial: 'В официальные',
+      },
+      properties: {
+        normalizedName: 'Нормализованное имя',
+        user: 'Автор',
+        userId: 'Автор',
+      },
+    },
     AuthorPost: {
       labels: {
         AuthorPost: 'Публикации',

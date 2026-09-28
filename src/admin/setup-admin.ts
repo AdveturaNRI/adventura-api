@@ -27,6 +27,7 @@ import { MarketingCampaignsService } from '../marketing/campaigns/marketing-camp
 import { MarketingAnalyticsService } from '../marketing/analytics/marketing-analytics.service';
 import { PartnersService } from '../partners/partners.service';
 import { CREATIVITY_CATEGORIES } from '../authors/types/author.type';
+import { UserGameSystemsService } from '../users/user-game-systems.service';
 import {
   createGrantRewardsPageHandler,
   deleteUserCascade,
@@ -1096,6 +1097,7 @@ export async function setupAdmin(
   const marketingAnalytics = app.get(MarketingAnalyticsService);
   const rewards = app.get(RewardsService);
   const partners = app.get(PartnersService);
+  const userGameSystems = app.get(UserGameSystemsService);
 
   const admin = new AdminJS({
     rootPath: '/admin',
@@ -2114,6 +2116,86 @@ export async function setupAdmin(
           properties: {
             description: {
               isRequired: false,
+            },
+          },
+        },
+      },
+      {
+        resource: { model: getModelByName('UserGameSystem'), client: prisma },
+        options: {
+          navigation: { name: 'Справочники', icon: 'Book' },
+          sort: { sortBy: 'name', direction: 'asc' },
+          listProperties: ['id', 'name', 'normalizedName', 'user', 'createdAt'],
+          filterProperties: ['name', 'normalizedName', 'userId', 'createdAt'],
+          editProperties: ['name'],
+          showProperties: [
+            'id',
+            'name',
+            'normalizedName',
+            'user',
+            'createdAt',
+            'updatedAt',
+          ],
+          properties: {
+            normalizedName: {
+              isVisible: { list: true, show: true, edit: false, filter: true },
+            },
+            games: { isVisible: false },
+          },
+          actions: {
+            new: { isAccessible: false, isVisible: false },
+            edit: { isAccessible: false, isVisible: false },
+            promoteOfficial: {
+              actionType: 'record',
+              icon: 'Star',
+              guard:
+                'Система станет официальной. Юзеры и их игры с этим названием привяжутся к каталогу, пустые дубли удалятся.',
+              handler: async (
+                _request: unknown,
+                _response: unknown,
+                context: {
+                  record?: { params: Record<string, unknown> };
+                  currentAdmin?: unknown;
+                },
+              ) => {
+                const name = String(context.record?.params.name ?? '').trim();
+                if (!name) {
+                  return {
+                    record: context.record,
+                    notice: { message: 'Нет названия системы', type: 'error' },
+                  };
+                }
+
+                try {
+                  const result = await userGameSystems.promoteToOfficial(name);
+                  const nicknames = result.attachedNicknames.slice(0, 12).join(', ');
+                  const more =
+                    result.attachedNicknames.length > 12
+                      ? ` и ещё ${result.attachedNicknames.length - 12}`
+                      : '';
+                  return {
+                    record: context.record,
+                    notice: {
+                      message: `«${result.name}» в официальных. Юзеров: ${result.attachedNicknames.length}${
+                        nicknames ? ` (${nicknames}${more})` : ''
+                      }. Игр перевязано: ${result.gamesRelinked}, пустых дублей снято: ${result.removedEmptyCustoms}.`,
+                      type: 'success',
+                    },
+                    redirectUrl: `/admin/resources/GameSystem/records/${result.gameSystemId}/show`,
+                  };
+                } catch (error) {
+                  return {
+                    record: context.record,
+                    notice: {
+                      message:
+                        error instanceof Error
+                          ? error.message
+                          : 'Не удалось сделать систему официальной',
+                      type: 'error',
+                    },
+                  };
+                }
+              },
             },
           },
         },
