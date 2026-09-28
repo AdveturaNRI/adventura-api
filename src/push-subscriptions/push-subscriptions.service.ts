@@ -342,26 +342,23 @@ export class PushSubscriptionsService implements OnModuleInit {
       return;
     }
     try {
+      // Data-only: let the service worker show the toast once.
+      // A top-level `notification` (or webpush.notification) makes the browser
+      // auto-display AND still fires onBackgroundMessage / push → duplicate,
+      // often with a default "Новое уведомление" body.
       await admin.messaging().send({
         token,
-        notification: {
-          title: payload.title,
-          body: payload.body,
-        },
         data: {
           title: payload.title,
           body: payload.body,
           icon: payload.icon,
           tag: payload.tag,
           url: payload.url,
+          requireInteraction: payload.requireInteraction ? 'true' : 'false',
         },
         webpush: {
-          notification: {
-            icon: payload.icon,
-            badge: payload.icon,
-            tag: payload.tag,
-            renotify: true,
-            requireInteraction: Boolean(payload.requireInteraction),
+          headers: {
+            Urgency: payload.requireInteraction ? 'high' : 'normal',
           },
           fcmOptions: {
             link: payload.url.startsWith('http')
