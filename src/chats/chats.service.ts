@@ -37,10 +37,16 @@ import {
   validateDiceRollInput,
 } from './dice-roll.util';
 import type { SendDiceRollDto } from './dto/send-dice-roll.dto';
+import { orderChatReactionEmojis } from './chat-reactions.util';
 
 const MESSAGE_ATTACHMENT_COLLECTION = 'attachment';
 const MESSAGE_ATTACHMENT_PREFIX = 'attachment-';
-const MESSAGE_IMAGE_VARIANTS = ['thumb', 'medium', 'large', 'original'] as const;
+const MESSAGE_IMAGE_VARIANTS = [
+  'thumb',
+  'medium',
+  'large',
+  'original',
+] as const;
 const CHAT_BACKGROUND_IMAGE_VARIANTS = ['medium', 'large', 'original'] as const;
 const MAX_MESSAGE_ATTACHMENTS = 10;
 const MEMBERS_PREVIEW_LIMIT = 3;
@@ -95,7 +101,13 @@ export type ChatPeer = {
   avatarUrl: string | null;
   online: boolean;
   lastSeenAt: string | null;
-  badges: Array<'alpha_tester' | 'bug_hunter' | 'founding_dm' | 'early_arrival' | 'tavern_keeper'>;
+  badges: Array<
+    | 'alpha_tester'
+    | 'bug_hunter'
+    | 'founding_dm'
+    | 'early_arrival'
+    | 'tavern_keeper'
+  >;
   avatarFrameId: string | null;
 };
 
@@ -106,7 +118,13 @@ export type ChatMember = {
   role: 'owner' | 'admin' | 'member';
   online: boolean;
   lastSeenAt: string | null;
-  badges: Array<'alpha_tester' | 'bug_hunter' | 'founding_dm' | 'early_arrival' | 'tavern_keeper'>;
+  badges: Array<
+    | 'alpha_tester'
+    | 'bug_hunter'
+    | 'founding_dm'
+    | 'early_arrival'
+    | 'tavern_keeper'
+  >;
   avatarFrameId: string | null;
 };
 
@@ -134,7 +152,13 @@ export type ChatMessageSender = {
   id: string;
   nickname: string;
   avatarUrl: string | null;
-  badges: Array<'alpha_tester' | 'bug_hunter' | 'founding_dm' | 'early_arrival' | 'tavern_keeper'>;
+  badges: Array<
+    | 'alpha_tester'
+    | 'bug_hunter'
+    | 'founding_dm'
+    | 'early_arrival'
+    | 'tavern_keeper'
+  >;
   avatarFrameId: string | null;
 };
 
@@ -160,6 +184,12 @@ export type ChatMessageDto = {
     nickname: string;
     messageId: string | null;
   } | null;
+  reactions?: Array<{
+    emoji: string;
+    count: number;
+    reactedByMe: boolean;
+    reactors?: Array<{ userId: string; nickname: string; avatarUrl: string | null }>;
+  }>;
 };
 
 export type ConversationBackgroundDto = {
@@ -177,6 +207,7 @@ export type ConversationListItem = {
   memberCount: number;
   membersPreview: ChatPeer[];
   peerLastReadAt: string | null;
+  myLastReadAt: string | null;
   myRole?: 'owner' | 'admin' | 'member' | null;
   lastMessage: {
     id: string;
@@ -257,7 +288,9 @@ function attachmentCollectionIndex(collection: string): number {
   if (collection === MESSAGE_ATTACHMENT_COLLECTION) {
     return 0;
   }
-  const match = new RegExp(`^${MESSAGE_ATTACHMENT_PREFIX}(\\d+)$`).exec(collection);
+  const match = new RegExp(`^${MESSAGE_ATTACHMENT_PREFIX}(\\d+)$`).exec(
+    collection,
+  );
   return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
 }
 
@@ -271,7 +304,10 @@ function orderedPair(userA: string, userB: string) {
     : { userLowId: userB, userHighId: userA };
 }
 
-function isHiddenForUser(hiddenAt: Date | null | undefined, lastCreatedAt: Date | null) {
+function isHiddenForUser(
+  hiddenAt: Date | null | undefined,
+  lastCreatedAt: Date | null,
+) {
   if (!hiddenAt) {
     return false;
   }
@@ -281,7 +317,9 @@ function isHiddenForUser(hiddenAt: Date | null | undefined, lastCreatedAt: Date 
   return lastCreatedAt <= hiddenAt;
 }
 
-function sortConversationListItems(items: ConversationListItem[]): ConversationListItem[] {
+function sortConversationListItems(
+  items: ConversationListItem[],
+): ConversationListItem[] {
   return [...items].sort((left, right) => {
     if (left.isPinned !== right.isPinned) {
       return left.isPinned ? -1 : 1;
@@ -366,7 +404,11 @@ export class ChatsService {
         where: {
           conversationId_userId: { conversationId: conversation.id, userId },
         },
-        create: { conversationId: conversation.id, userId, lastReadAt: new Date() },
+        create: {
+          conversationId: conversation.id,
+          userId,
+          lastReadAt: new Date(),
+        },
         update: { hiddenAt: null },
       });
     }
@@ -401,7 +443,9 @@ export class ChatsService {
       select: { id: true },
     });
     if (users.length !== otherIds.length) {
-      throw new NotFoundException('Один или несколько пользователей не найдены');
+      throw new NotFoundException(
+        'Один или несколько пользователей не найдены',
+      );
     }
 
     const allMemberIds = [userId, ...otherIds];
@@ -428,7 +472,9 @@ export class ChatsService {
     });
 
     const summaries = await Promise.all(
-      allMemberIds.map((id) => this.getConversationSummary(id, conversation.id)),
+      allMemberIds.map((id) =>
+        this.getConversationSummary(id, conversation.id),
+      ),
     );
     for (let i = 0; i < allMemberIds.length; i += 1) {
       this.realtime.emitConversationUpdated([allMemberIds[i]], summaries[i]);
@@ -462,7 +508,10 @@ export class ChatsService {
       throw new ForbiddenException('Нет доступа к чату игры');
     }
 
-    const memberIds = uniqueIds([game.ownerId, ...game.players.map((p) => p.userId)]);
+    const memberIds = uniqueIds([
+      game.ownerId,
+      ...game.players.map((p) => p.userId),
+    ]);
 
     let conversation = await this.prisma.conversation.findUnique({
       where: { gameId },
@@ -492,31 +541,49 @@ export class ChatsService {
         },
       });
 
-      const openerSummary = await this.getConversationSummary(userId, conversation.id);
+      const openerSummary = await this.getConversationSummary(
+        userId,
+        conversation.id,
+      );
       for (const memberId of memberIds) {
         if (memberId === userId) {
           continue;
         }
-        const summary = await this.getConversationSummary(memberId, conversation.id);
+        const summary = await this.getConversationSummary(
+          memberId,
+          conversation.id,
+        );
         this.realtime.emitConversationUpdated([memberId], summary);
       }
       return openerSummary;
     }
 
-    await this.syncGameChatMembers(conversation.id, game.ownerId, memberIds, game.title);
+    await this.syncGameChatMembers(
+      conversation.id,
+      game.ownerId,
+      memberIds,
+      game.title,
+    );
 
     await this.prisma.conversationRead.upsert({
       where: {
         conversationId_userId: { conversationId: conversation.id, userId },
       },
-      create: { conversationId: conversation.id, userId, lastReadAt: new Date() },
+      create: {
+        conversationId: conversation.id,
+        userId,
+        lastReadAt: new Date(),
+      },
       update: { hiddenAt: null },
     });
 
     return this.getConversationSummary(userId, conversation.id);
   }
 
-  async listMembers(userId: string, conversationId: string): Promise<ChatMember[]> {
+  async listMembers(
+    userId: string,
+    conversationId: string,
+  ): Promise<ChatMember[]> {
     await this.assertParticipant(userId, conversationId);
 
     const participants = await this.prisma.conversationParticipant.findMany({
@@ -533,13 +600,19 @@ export class ChatsService {
 
     return Promise.all(
       participants.map(async (participant) => {
-        const look = looks.get(participant.user.id) ?? { badges: [], avatarFrameId: null };
+        const look = looks.get(participant.user.id) ?? {
+          badges: [],
+          avatarFrameId: null,
+        };
         return {
           id: participant.user.id,
           nickname: participant.user.nickname,
           avatarUrl: await this.getAvatarUrl(participant.user.id),
           role: toChatMemberRole(participant.role),
-          online: this.realtime.isPresent(participant.user.id, participant.user.lastSeenAt),
+          online: this.realtime.isPresent(
+            participant.user.id,
+            participant.user.lastSeenAt,
+          ),
           lastSeenAt: participant.user.lastSeenAt?.toISOString() ?? null,
           badges: look.badges,
           avatarFrameId: look.avatarFrameId,
@@ -553,9 +626,14 @@ export class ChatsService {
     if (!trimmed) {
       throw new BadRequestException('Укажите название группы');
     }
-    const { conversation } = await this.requireUserGroupStaff(userId, conversationId);
+    const { conversation } = await this.requireUserGroupStaff(
+      userId,
+      conversationId,
+    );
     if (conversation.gameId) {
-      throw new BadRequestException('Название чата игры меняется вместе с игрой');
+      throw new BadRequestException(
+        'Название чата игры меняется вместе с игрой',
+      );
     }
 
     await this.prisma.conversation.update({
@@ -566,7 +644,11 @@ export class ChatsService {
     return this.emitGroupSummaries(conversationId);
   }
 
-  async addGroupMembers(userId: string, conversationId: string, memberIds: string[]) {
+  async addGroupMembers(
+    userId: string,
+    conversationId: string,
+    memberIds: string[],
+  ) {
     await this.requireUserGroupStaff(userId, conversationId);
 
     const otherIds = uniqueIds(memberIds.filter((id) => id && id !== userId));
@@ -579,7 +661,9 @@ export class ChatsService {
       select: { id: true },
     });
     if (users.length !== otherIds.length) {
-      throw new NotFoundException('Один или несколько пользователей не найдены');
+      throw new NotFoundException(
+        'Один или несколько пользователей не найдены',
+      );
     }
 
     const existing = await this.prisma.conversationParticipant.findMany({
@@ -621,10 +705,19 @@ export class ChatsService {
     return this.listMembers(userId, conversationId);
   }
 
-  async removeGroupMember(actorId: string, conversationId: string, targetUserId: string) {
-    const { membership: actor } = await this.requireUserGroupStaff(actorId, conversationId);
+  async removeGroupMember(
+    actorId: string,
+    conversationId: string,
+    targetUserId: string,
+  ) {
+    const { membership: actor } = await this.requireUserGroupStaff(
+      actorId,
+      conversationId,
+    );
     if (targetUserId === actorId) {
-      throw new BadRequestException('Чтобы выйти из группы, используйте «Выйти»');
+      throw new BadRequestException(
+        'Чтобы выйти из группы, используйте «Выйти»',
+      );
     }
 
     const target = await this.prisma.conversationParticipant.findUnique({
@@ -643,7 +736,9 @@ export class ChatsService {
       actor.role === ConversationParticipantRole.ADMIN &&
       target.role !== ConversationParticipantRole.MEMBER
     ) {
-      throw new ForbiddenException('Администратор может исключать только обычных участников');
+      throw new ForbiddenException(
+        'Администратор может исключать только обычных участников',
+      );
     }
 
     await this.prisma.conversationParticipant.delete({
@@ -682,7 +777,9 @@ export class ChatsService {
       throw new NotFoundException('Участник не найден');
     }
     if (target.role === ConversationParticipantRole.OWNER) {
-      throw new ForbiddenException('Роль создателя меняется только передачей прав');
+      throw new ForbiddenException(
+        'Роль создателя меняется только передачей прав',
+      );
     }
 
     const nextRole =
@@ -744,7 +841,10 @@ export class ChatsService {
   }
 
   async deleteGroup(userId: string, conversationId: string) {
-    const { conversation } = await this.requireUserGroupOwner(userId, conversationId);
+    const { conversation } = await this.requireUserGroupOwner(
+      userId,
+      conversationId,
+    );
     if (conversation.gameId) {
       throw new BadRequestException('Чат игры удаляется вместе с игрой');
     }
@@ -767,7 +867,9 @@ export class ChatsService {
   private async emitGroupSummaries(conversationId: string) {
     const participantIds = await this.getParticipantIds(conversationId);
     const summaries = await Promise.all(
-      participantIds.map((id) => this.getConversationSummary(id, conversationId)),
+      participantIds.map((id) =>
+        this.getConversationSummary(id, conversationId),
+      ),
     );
     for (let i = 0; i < participantIds.length; i += 1) {
       this.realtime.emitConversationUpdated([participantIds[i]], summaries[i]);
@@ -821,7 +923,9 @@ export class ChatsService {
     const conversation = await this.assertParticipant(userId, conversationId);
 
     if (conversation.type !== ConversationType.GROUP) {
-      throw new BadRequestException('Из личного чата нельзя выйти — удалите его');
+      throw new BadRequestException(
+        'Из личного чата нельзя выйти — удалите его',
+      );
     }
 
     // Game chats: hide for self, keep roster in sync with the game.
@@ -861,8 +965,9 @@ export class ChatsService {
       remaining.length > 0
     ) {
       const nextOwner =
-        remaining.find((row) => row.role === ConversationParticipantRole.ADMIN) ??
-        remaining[0];
+        remaining.find(
+          (row) => row.role === ConversationParticipantRole.ADMIN,
+        ) ?? remaining[0];
       await this.prisma.conversationParticipant.update({
         where: {
           conversationId_userId: {
@@ -894,7 +999,10 @@ export class ChatsService {
 
     await Promise.all(
       remaining.map(async (row) => {
-        const summary = await this.getConversationSummary(row.userId, conversationId);
+        const summary = await this.getConversationSummary(
+          row.userId,
+          conversationId,
+        );
         this.realtime.emitConversationUpdated([row.userId], summary);
       }),
     );
@@ -971,7 +1079,9 @@ export class ChatsService {
       where: { conversationId: conversation.id, userId },
     });
 
-    this.realtime.emitConversationDeleted([userId], { conversationId: conversation.id });
+    this.realtime.emitConversationDeleted([userId], {
+      conversationId: conversation.id,
+    });
     this.realtime.emitUnreadSync(userId, {
       chats: await this.countUnreadChats(userId),
       notifications: await this.countUnreadNotifications(userId),
@@ -986,12 +1096,15 @@ export class ChatsService {
     );
   }
 
-
   /**
    * System notice in the game group chat when the master deletes the game.
    * Call before detaching/deleting the conversation.
    */
-  async postGameDeletedMessage(ownerId: string, gameId: string, gameTitle: string) {
+  async postGameDeletedMessage(
+    ownerId: string,
+    gameId: string,
+    gameTitle: string,
+  ) {
     const conversation = await this.prisma.conversation.findUnique({
       where: { gameId },
       select: { id: true },
@@ -1023,7 +1136,12 @@ export class ChatsService {
         where: {
           conversationId_userId: { conversationId, userId: ownerId },
         },
-        create: { conversationId, userId: ownerId, lastReadAt: now, hiddenAt: null },
+        create: {
+          conversationId,
+          userId: ownerId,
+          lastReadAt: now,
+          hiddenAt: null,
+        },
         update: { lastReadAt: now, hiddenAt: null },
       }),
       ...participantIds
@@ -1146,21 +1264,37 @@ export class ChatsService {
         where: {
           conversationId_userId: { conversationId, userId: actorId },
         },
-        create: { conversationId, userId: actorId, lastReadAt: now, hiddenAt: null },
+        create: {
+          conversationId,
+          userId: actorId,
+          lastReadAt: now,
+          hiddenAt: null,
+        },
         update: { lastReadAt: now, hiddenAt: null },
       }),
       this.prisma.conversationRead.upsert({
         where: {
           conversationId_userId: { conversationId, userId: targetUserId },
         },
-        create: { conversationId, userId: targetUserId, lastReadAt: new Date(0), hiddenAt: null },
+        create: {
+          conversationId,
+          userId: targetUserId,
+          lastReadAt: new Date(0),
+          hiddenAt: null,
+        },
         update: { hiddenAt: null },
       }),
     ]);
 
     const dto = await this.toMessageDto(message);
-    const summaryForActor = await this.getConversationSummary(actorId, conversationId);
-    const summaryForTarget = await this.getConversationSummary(targetUserId, conversationId);
+    const summaryForActor = await this.getConversationSummary(
+      actorId,
+      conversationId,
+    );
+    const summaryForTarget = await this.getConversationSummary(
+      targetUserId,
+      conversationId,
+    );
 
     this.realtime.emitMessageNew([actorId, targetUserId], dto);
     this.realtime.emitConversationUpdated([actorId], summaryForActor);
@@ -1204,21 +1338,37 @@ export class ChatsService {
         where: {
           conversationId_userId: { conversationId, userId: actorId },
         },
-        create: { conversationId, userId: actorId, lastReadAt: now, hiddenAt: null },
+        create: {
+          conversationId,
+          userId: actorId,
+          lastReadAt: now,
+          hiddenAt: null,
+        },
         update: { lastReadAt: now, hiddenAt: null },
       }),
       this.prisma.conversationRead.upsert({
         where: {
           conversationId_userId: { conversationId, userId: targetUserId },
         },
-        create: { conversationId, userId: targetUserId, lastReadAt: new Date(0), hiddenAt: null },
+        create: {
+          conversationId,
+          userId: targetUserId,
+          lastReadAt: new Date(0),
+          hiddenAt: null,
+        },
         update: { hiddenAt: null },
       }),
     ]);
 
     const dto = await this.toMessageDto(message);
-    const summaryForActor = await this.getConversationSummary(actorId, conversationId);
-    const summaryForTarget = await this.getConversationSummary(targetUserId, conversationId);
+    const summaryForActor = await this.getConversationSummary(
+      actorId,
+      conversationId,
+    );
+    const summaryForTarget = await this.getConversationSummary(
+      targetUserId,
+      conversationId,
+    );
 
     this.realtime.emitMessageNew([actorId, targetUserId], dto);
     this.realtime.emitConversationUpdated([actorId], summaryForActor);
@@ -1230,7 +1380,10 @@ export class ChatsService {
   }
 
   async blockPeer(userId: string, conversationId: string) {
-    const conversation = await this.assertDirectConversation(userId, conversationId);
+    const conversation = await this.assertDirectConversation(
+      userId,
+      conversationId,
+    );
     const peerId = this.directPeerId(conversation, userId);
 
     const existing = await this.prisma.userBlock.findUnique({
@@ -1290,7 +1443,12 @@ export class ChatsService {
         where: {
           conversationId_userId: { conversationId, userId: peerId },
         },
-        create: { conversationId, userId: peerId, lastReadAt: new Date(0), hiddenAt: null },
+        create: {
+          conversationId,
+          userId: peerId,
+          lastReadAt: new Date(0),
+          hiddenAt: null,
+        },
         update: { hiddenAt: null },
       }),
     ]);
@@ -1298,8 +1456,14 @@ export class ChatsService {
     const dto = await this.toMessageDto(message);
     this.realtime.emitMessageNew([userId, peerId], dto);
 
-    const summaryForActor = await this.getConversationSummary(userId, conversationId);
-    const summaryForPeer = await this.getConversationSummary(peerId, conversationId);
+    const summaryForActor = await this.getConversationSummary(
+      userId,
+      conversationId,
+    );
+    const summaryForPeer = await this.getConversationSummary(
+      peerId,
+      conversationId,
+    );
 
     this.realtime.emitConversationUpdated([userId], summaryForActor);
     this.realtime.emitConversationUpdated([peerId], summaryForPeer);
@@ -1310,7 +1474,10 @@ export class ChatsService {
   }
 
   async unblockPeer(userId: string, conversationId: string) {
-    const conversation = await this.assertDirectConversation(userId, conversationId);
+    const conversation = await this.assertDirectConversation(
+      userId,
+      conversationId,
+    );
     const peerId = this.directPeerId(conversation, userId);
 
     const deleted = await this.prisma.userBlock.deleteMany({
@@ -1334,7 +1501,7 @@ export class ChatsService {
       where: {
         conversationId_userId: { conversationId, userId: peerId },
       },
-      select: { hiddenAt: true },
+        select: { hiddenAt: true },
     });
     const peerStaysHidden = Boolean(peerRead?.hiddenAt);
 
@@ -1365,13 +1532,22 @@ export class ChatsService {
     ]);
 
     const dto = await this.toMessageDto(message);
-    this.realtime.emitMessageNew(peerStaysHidden ? [userId] : [userId, peerId], dto);
+    this.realtime.emitMessageNew(
+      peerStaysHidden ? [userId] : [userId, peerId],
+      dto,
+    );
 
-    const summaryForActor = await this.getConversationSummary(userId, conversationId);
+    const summaryForActor = await this.getConversationSummary(
+      userId,
+      conversationId,
+    );
     this.realtime.emitConversationUpdated([userId], summaryForActor);
 
     if (!peerStaysHidden) {
-      const summaryForPeer = await this.getConversationSummary(peerId, conversationId);
+      const summaryForPeer = await this.getConversationSummary(
+        peerId,
+        conversationId,
+      );
       this.realtime.emitConversationUpdated([peerId], summaryForPeer);
     } else {
       this.realtime.emitConversationDeleted([peerId], { conversationId });
@@ -1459,14 +1635,19 @@ export class ChatsService {
       const lastReadAt = myRead?.lastReadAt;
       const unread = Boolean(
         last &&
-          last.senderId !== userId &&
-          (!lastReadAt || last.createdAt > lastReadAt),
+        last.senderId !== userId &&
+        (!lastReadAt || last.createdAt > lastReadAt),
       );
 
       const lastMessage = last
         ? {
             id: last.id,
-            body: this.previewBodyForViewer(last.body, last.kind, last.senderId, userId),
+            body: this.previewBodyForViewer(
+              last.body,
+              last.kind,
+              last.senderId,
+              userId,
+            ),
             senderId: last.senderId,
             createdAt: last.createdAt.toISOString(),
             hasImage: attachmentKind === 'image',
@@ -1480,7 +1661,9 @@ export class ChatsService {
           .filter((p) => p.userId !== userId)
           .slice(0, MEMBERS_PREVIEW_LIMIT)
           .map((p) => p.user);
-        const myParticipant = conversation.participants.find((p) => p.userId === userId);
+        const myParticipant = conversation.participants.find(
+          (p) => p.userId === userId,
+        );
         items.push({
           id: conversation.id,
           type: 'group',
@@ -1488,8 +1671,11 @@ export class ChatsService {
           gameId: conversation.gameId,
           peer: null,
           memberCount: conversation.participants.length,
-          membersPreview: await Promise.all(previewUsers.map((user) => this.toPeerDto(user))),
+          membersPreview: await Promise.all(
+            previewUsers.map((user) => this.toPeerDto(user)),
+          ),
           peerLastReadAt: null,
+          myLastReadAt: myRead?.lastReadAt.toISOString() ?? null,
           myRole: myParticipant ? toChatMemberRole(myParticipant.role) : null,
           lastMessage,
           unread,
@@ -1500,7 +1686,9 @@ export class ChatsService {
           isPinned: Boolean(myRead?.pinnedAt),
           pinSortOrder: myRead?.pinSortOrder ?? null,
           background,
-          updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
+          updatedAt: (
+            conversation.lastMessageAt ?? conversation.updatedAt
+          ).toISOString(),
         });
         continue;
       }
@@ -1513,7 +1701,9 @@ export class ChatsService {
         continue;
       }
 
-      const peerRead = conversation.reads.find((read) => read.userId === peerUser.id);
+      const peerRead = conversation.reads.find(
+        (read) => read.userId === peerUser.id,
+      );
       const blockedByMe = blockRows.some(
         (row) => row.blockerId === userId && row.blockedId === peerUser.id,
       );
@@ -1530,23 +1720,30 @@ export class ChatsService {
         memberCount: 2,
         membersPreview: [],
         peerLastReadAt: peerRead?.lastReadAt.toISOString() ?? null,
+        myLastReadAt: myRead?.lastReadAt.toISOString() ?? null,
         lastMessage,
         unread,
         isFavorite: favoriteIds.has(peerUser.id) && !blockedByMe && !blockedMe,
-        peerFavoritedMe: favoritedMeIds.has(peerUser.id) && !blockedByMe && !blockedMe,
+        peerFavoritedMe:
+          favoritedMeIds.has(peerUser.id) && !blockedByMe && !blockedMe,
         blockedByMe,
         blockedMe,
         isPinned: Boolean(myRead?.pinnedAt),
         pinSortOrder: myRead?.pinSortOrder ?? null,
         background,
-        updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
+        updatedAt: (
+          conversation.lastMessageAt ?? conversation.updatedAt
+        ).toISOString(),
       });
     }
 
     return sortConversationListItems(items);
   }
 
-  async pinConversation(userId: string, conversationId: string): Promise<ConversationListItem> {
+  async pinConversation(
+    userId: string,
+    conversationId: string,
+  ): Promise<ConversationListItem> {
     await this.assertParticipant(userId, conversationId);
 
     const existing = await this.prisma.conversationRead.findUnique({
@@ -1585,7 +1782,10 @@ export class ChatsService {
     return summary;
   }
 
-  async unpinConversation(userId: string, conversationId: string): Promise<ConversationListItem> {
+  async unpinConversation(
+    userId: string,
+    conversationId: string,
+  ): Promise<ConversationListItem> {
     await this.assertParticipant(userId, conversationId);
 
     await this.prisma.conversationRead.upsert({
@@ -1612,7 +1812,10 @@ export class ChatsService {
       remaining.map((row, index) =>
         this.prisma.conversationRead.update({
           where: {
-            conversationId_userId: { conversationId: row.conversationId, userId },
+            conversationId_userId: {
+              conversationId: row.conversationId,
+              userId,
+            },
           },
           data: { pinSortOrder: index },
         }),
@@ -1628,7 +1831,9 @@ export class ChatsService {
     userId: string,
     conversationIds: string[],
   ): Promise<ConversationListItem[]> {
-    const unique = uniqueIds(conversationIds.map((id) => id.trim()).filter(Boolean));
+    const unique = uniqueIds(
+      conversationIds.map((id) => id.trim()).filter(Boolean),
+    );
     if (unique.length === 0) {
       throw new BadRequestException('Нечего упорядочивать');
     }
@@ -1639,10 +1844,14 @@ export class ChatsService {
     });
     const pinnedIds = new Set(pinned.map((row) => row.conversationId));
     if (unique.some((id) => !pinnedIds.has(id))) {
-      throw new BadRequestException('Можно менять порядок только у закреплённых чатов');
+      throw new BadRequestException(
+        'Можно менять порядок только у закреплённых чатов',
+      );
     }
     if (unique.length !== pinnedIds.size) {
-      throw new BadRequestException('Передайте все закреплённые чаты в новом порядке');
+      throw new BadRequestException(
+        'Передайте все закреплённые чаты в новом порядке',
+      );
     }
 
     await this.prisma.$transaction(
@@ -1699,14 +1908,24 @@ export class ChatsService {
 
     const hasMore = messages.length > limit;
     const page = hasMore ? messages.slice(0, limit) : messages;
+    const reactionsByMessage = await this.getMessageReactionsForMessages(
+      page.map((message) => message.id),
+      userId,
+    );
     const dtos = await Promise.all(
-      page.map((message) => this.toMessageDto(message, userId)),
+      page.map((message) =>
+        this.toMessageDto(
+          message,
+          userId,
+          reactionsByMessage.get(message.id) ?? [],
+        ),
+      ),
     );
 
     if (conversation.type === ConversationType.GROUP) {
       return {
         items: dtos.reverse(),
-        nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
+        nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,
         peerLastReadAt: null,
         blockedByMe: false,
         blockedMe: false,
@@ -1723,10 +1942,378 @@ export class ChatsService {
 
     return {
       items: dtos.reverse(),
-      nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
+      nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,
       peerLastReadAt: peerRead?.lastReadAt.toISOString() ?? null,
       ...(await this.getBlockFlags(userId, peerId)),
     };
+  }
+
+  async setMessageReaction(
+    userId: string,
+    conversationId: string,
+    messageId: string,
+    emoji: string,
+  ) {
+    await this.assertParticipant(userId, conversationId);
+    const message = await this.prisma.message.findFirst({
+      where: { id: messageId, conversationId, kind: MessageKind.USER },
+      select: { id: true },
+    });
+    if (!message) throw new NotFoundException('Сообщение не найдено');
+
+    const reaction = await this.prisma.messageReaction.upsert({
+      where: { messageId_userId: { messageId, userId } },
+      create: { messageId, userId, emoji },
+      update: { emoji },
+    });
+    await this.prisma.userChatReactionPreference.upsert({
+      where: { userId_emoji: { userId, emoji } },
+      create: { userId, emoji, useCount: 1 },
+      update: { useCount: { increment: 1 } },
+    });
+    const recipients = (await this.getParticipantIds(conversationId)).filter(
+      (id) => id !== userId,
+    );
+    await Promise.all(
+      recipients.map((recipientId) =>
+        this.prisma.messageReactionReceipt.upsert({
+          where: {
+            reactionId_recipientId: { reactionId: reaction.id, recipientId },
+          },
+          create: { reactionId: reaction.id, recipientId },
+          update: { readAt: null, createdAt: new Date() },
+        }),
+      ),
+    );
+
+    const reactions = await this.getMessageReactions(messageId, userId);
+    const event = {
+      conversationId,
+      messageId,
+      actorId: userId,
+      emoji,
+      reactions,
+    };
+    this.realtime.emitMessageReaction(
+      await this.getParticipantIds(conversationId),
+      event,
+    );
+    if (recipients.length > 0) {
+      const actor = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { nickname: true },
+      });
+      const push = {
+        title: 'Реакция на сообщение',
+        body: `${actor?.nickname?.trim() || 'Участник'} поставил реакцию ${emoji}`,
+        tag: `chat-reaction:${reaction.id}`,
+        url: `/chats/${encodeURIComponent(conversationId)}`,
+      };
+      void Promise.all(
+        recipients.map((recipientId) =>
+          this.pushSubscriptions.sendToUser(recipientId, push),
+        ),
+      ).catch(() => undefined);
+    }
+    return { messageId, reactions };
+  }
+
+  async getChatReactionOrder(userId: string) {
+    const usage = await this.prisma.userChatReactionPreference.findMany({
+      where: { userId },
+      select: { emoji: true, useCount: true },
+      orderBy: { useCount: 'desc' },
+    });
+    return { reactions: orderChatReactionEmojis(usage) };
+  }
+
+  async removeMessageReaction(
+    userId: string,
+    conversationId: string,
+    messageId: string,
+  ) {
+    await this.assertParticipant(userId, conversationId);
+    const message = await this.prisma.message.findFirst({
+      where: { id: messageId, conversationId },
+      select: { id: true },
+    });
+    if (!message) throw new NotFoundException('Сообщение не найдено');
+    await this.prisma.messageReaction.deleteMany({
+      where: { messageId, userId },
+    });
+    const reactions = await this.getMessageReactions(messageId, userId);
+    this.realtime.emitMessageReaction(
+      await this.getParticipantIds(conversationId),
+      {
+        conversationId,
+        messageId,
+        actorId: userId,
+        emoji: null,
+        reactions,
+      },
+    );
+    return { messageId, reactions };
+  }
+
+  async unreadMessageReactionCount(userId: string, conversationId: string) {
+    await this.assertParticipant(userId, conversationId);
+    const count = await this.prisma.messageReactionReceipt.count({
+      where: {
+        recipientId: userId,
+        readAt: null,
+        reaction: { message: { conversationId } },
+      },
+    });
+    return { count };
+  }
+
+  async openNextUnreadMessageReaction(userId: string, conversationId: string) {
+    await this.assertParticipant(userId, conversationId);
+    const receipt = await this.prisma.messageReactionReceipt.findFirst({
+      where: {
+        recipientId: userId,
+        readAt: null,
+        reaction: { message: { conversationId } },
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      include: {
+        reaction: {
+          select: {
+            id: true,
+            emoji: true,
+            messageId: true,
+            message: true,
+            user: { select: { nickname: true } },
+          },
+        },
+      },
+    });
+    if (!receipt) return { item: null, count: 0 };
+    const count = await this.prisma.messageReactionReceipt.count({
+      where: {
+        recipientId: userId,
+        readAt: null,
+        reaction: { message: { conversationId } },
+      },
+    });
+    return {
+      item: {
+        messageId: receipt.reaction.messageId,
+        emoji: receipt.reaction.emoji,
+        actorNickname: receipt.reaction.user.nickname,
+        message: await this.toMessageDto(receipt.reaction.message, userId),
+      },
+      count,
+    };
+  }
+
+  async markVisibleMessagesRead(
+    userId: string,
+    conversationId: string,
+    messageIds: string[],
+  ) {
+    await this.assertParticipant(userId, conversationId);
+    const uniqueMessageIds = [...new Set(messageIds.filter(Boolean))];
+    if (uniqueMessageIds.length === 0) {
+      return { ok: true as const, count: await this.countUnreadMessageReactions(userId, conversationId) };
+    }
+
+    const visibleMessages = await this.prisma.message.findMany({
+      where: { id: { in: uniqueMessageIds }, conversationId },
+      select: { id: true, createdAt: true },
+    });
+    if (visibleMessages.length === 0) {
+      return { ok: true as const, count: await this.countUnreadMessageReactions(userId, conversationId) };
+    }
+
+    const now = new Date();
+    const latestVisibleAt = visibleMessages.reduce(
+      (latest, message) =>
+        message.createdAt > latest ? message.createdAt : latest,
+      visibleMessages[0].createdAt,
+    );
+    const currentRead = await this.prisma.conversationRead.findUnique({
+      where: { conversationId_userId: { conversationId, userId } },
+      select: { lastReadAt: true },
+    });
+    const advancedReadAt =
+      !currentRead || latestVisibleAt > currentRead.lastReadAt
+        ? latestVisibleAt
+        : null;
+    if (advancedReadAt) {
+      await this.prisma.conversationRead.upsert({
+        where: { conversationId_userId: { conversationId, userId } },
+        create: { conversationId, userId, lastReadAt: advancedReadAt },
+        update: { lastReadAt: advancedReadAt },
+      });
+    }
+
+    await this.prisma.messageReactionReceipt.updateMany({
+      where: {
+        recipientId: userId,
+        readAt: null,
+        reaction: {
+          messageId: { in: visibleMessages.map((message) => message.id) },
+        },
+      },
+      data: { readAt: now },
+    });
+    const count = await this.countUnreadMessageReactions(userId, conversationId);
+    this.realtime.emitReactionUnreadSync(userId, { conversationId, count });
+
+    if (advancedReadAt) {
+      const participantIds = await this.getParticipantIds(conversationId);
+      await Promise.all(
+        participantIds.map(async (participantId) => {
+          const summary = await this.getConversationSummary(
+            participantId,
+            conversationId,
+          );
+          this.realtime.emitConversationUpdated([participantId], summary);
+        }),
+      );
+      this.realtime.emitConversationRead(participantIds, {
+        conversationId,
+        readerId: userId,
+        lastReadAt: advancedReadAt.toISOString(),
+      });
+      this.realtime.emitUnreadSync(userId, {
+        chats: await this.countUnreadChats(userId),
+        notifications: await this.countUnreadNotifications(userId),
+      });
+    }
+
+    return { ok: true as const, count };
+  }
+
+  private countUnreadMessageReactions(userId: string, conversationId: string) {
+    return this.prisma.messageReactionReceipt.count({
+      where: {
+        recipientId: userId,
+        readAt: null,
+        reaction: { message: { conversationId } },
+      },
+    });
+  }
+
+  private async getMessageReactions(messageId: string, viewerId: string) {
+    const grouped = await this.getMessageReactionsForMessages(
+      [messageId],
+      viewerId,
+    );
+    return grouped.get(messageId) ?? [];
+  }
+
+  private async getMessageReactionsForMessages(
+    messageIds: string[],
+    viewerId: string,
+  ) {
+    if (messageIds.length === 0) {
+      return new Map<
+        string,
+        Array<{
+          emoji: string;
+          count: number;
+          reactedByMe: boolean;
+          reactors?: Array<{ userId: string; nickname: string; avatarUrl: string | null }>;
+        }>
+      >();
+    }
+    const rows = await this.prisma.messageReaction.findMany({
+      where: { messageId: { in: messageIds } },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        messageId: true,
+        userId: true,
+        emoji: true,
+        user: { select: { nickname: true } },
+      },
+    });
+    const grouped = new Map<
+      string,
+      Map<
+        string,
+        {
+          emoji: string;
+          count: number;
+          reactedByMe: boolean;
+          reactors: Array<{ userId: string; nickname: string; avatarUrl: string | null }>;
+        }
+      >
+    >();
+    for (const row of rows) {
+      const byEmoji = grouped.get(row.messageId) ?? new Map();
+      const item = byEmoji.get(row.emoji) ?? {
+        emoji: row.emoji,
+        count: 0,
+        reactedByMe: false,
+        reactors: [],
+      };
+      item.count += 1;
+      item.reactedByMe ||= row.userId === viewerId;
+      item.reactors.push({
+        userId: row.userId,
+        nickname: row.user.nickname,
+        avatarUrl: null,
+      });
+      byEmoji.set(row.emoji, item);
+      grouped.set(row.messageId, byEmoji);
+    }
+
+    const usersWithVisibleAvatars = [
+      ...new Set(
+        [...grouped.values()]
+          .flatMap((items) => [...items.values()])
+          .filter((item) => item.count <= 4)
+          .flatMap((item) => item.reactors.map((reactor) => reactor.userId)),
+      ),
+    ];
+    const avatarMedia = usersWithVisibleAvatars.length
+      ? await this.prisma.media.findMany({
+          where: {
+            entityType: 'User',
+            entityId: { in: usersWithVisibleAvatars },
+            collection: 'avatar',
+          },
+        })
+      : [];
+    const mediaByUser = new Map<string, typeof avatarMedia>();
+    for (const media of avatarMedia) {
+      const items = mediaByUser.get(media.entityId) ?? [];
+      items.push(media);
+      mediaByUser.set(media.entityId, items);
+    }
+    const avatarUrls = new Map<string, string | null>();
+    await Promise.all(
+      usersWithVisibleAvatars.map(async (userId) => {
+        const media = mediaByUser.get(userId) ?? [];
+        if (media.length === 0) {
+          avatarUrls.set(userId, null);
+          return;
+        }
+        const urls = await this.mediaService.getCollectionUrls(media);
+        avatarUrls.set(
+          userId,
+          urls.thumb ?? urls.small ?? urls.medium ?? urls.large ?? null,
+        );
+      }),
+    );
+
+    return new Map(
+      [...grouped.entries()].map(([id, items]) => [
+        id,
+        [...items.values()].map((item) => ({
+          ...item,
+          reactors:
+            item.count <= 4
+              ? item.reactors.map((reactor) => ({
+                  ...reactor,
+                  avatarUrl: avatarUrls.get(reactor.userId) ?? null,
+                }))
+              : [],
+        })),
+      ]),
+    );
   }
 
   async sendMessage(
@@ -1749,7 +2336,9 @@ export class ChatsService {
         select: { id: true },
       });
       if (blockedMe) {
-        throw new ForbiddenException('Вас заблокировали. Отправлять сообщения нельзя.');
+        throw new ForbiddenException(
+          'Вас заблокировали. Отправлять сообщения нельзя.',
+        );
       }
     }
 
@@ -1802,20 +2391,39 @@ export class ChatsService {
         );
         await this.mediaService.replaceCollection(entity, variants);
       } else {
-        const isVoice = kind === 'audio' && uploads.length === 1 && Boolean(voice?.voiceDurationSec);
-        await this.mediaService.saveRawFile(entity, file.buffer, file.mimetype, {
-          fileName: file.originalname?.trim() || attachmentName || undefined,
-          durationSec: isVoice ? voice?.voiceDurationSec : null,
-          waveform: isVoice ? this.parseVoiceWaveform(voice?.voiceWaveform) : null,
-        });
+        const isVoice =
+          kind === 'audio' &&
+          uploads.length === 1 &&
+          Boolean(voice?.voiceDurationSec);
+        await this.mediaService.saveRawFile(
+          entity,
+          file.buffer,
+          file.mimetype,
+          {
+            fileName: file.originalname?.trim() || attachmentName || undefined,
+            durationSec: isVoice ? voice?.voiceDurationSec : null,
+            waveform: isVoice
+              ? this.parseVoiceWaveform(voice?.voiceWaveform)
+              : null,
+          },
+        );
       }
     }
 
-    await this.afterMessageCreated(userId, conversationId, participantIds, message.id);
+    await this.afterMessageCreated(
+      userId,
+      conversationId,
+      participantIds,
+      message.id,
+    );
     return this.toMessageDto(message, userId);
   }
 
-  async sendDiceRoll(userId: string, conversationId: string, dto: SendDiceRollDto) {
+  async sendDiceRoll(
+    userId: string,
+    conversationId: string,
+    dto: SendDiceRollDto,
+  ) {
     const conversation = await this.assertParticipant(userId, conversationId);
     const participantIds = await this.getParticipantIds(conversationId);
 
@@ -1828,7 +2436,9 @@ export class ChatsService {
         select: { id: true },
       });
       if (blockedMe) {
-        throw new ForbiddenException('Вас заблокировали. Отправлять сообщения нельзя.');
+        throw new ForbiddenException(
+          'Вас заблокировали. Отправлять сообщения нельзя.',
+        );
       }
     }
 
@@ -1857,7 +2467,10 @@ export class ChatsService {
           })()
         : rollDiceServerSide(dto.dice, modifier, dto.color, mode, dto.skin);
     payload.hidden = Boolean(dto.hidden);
-    const ownedSkin = await this.rewardsService.resolveOwnedDiceSkin(userId, dto.skin);
+    const ownedSkin = await this.rewardsService.resolveOwnedDiceSkin(
+      userId,
+      dto.skin,
+    );
     if (ownedSkin) {
       payload.skin = ownedSkin;
     } else {
@@ -1873,7 +2486,12 @@ export class ChatsService {
       },
     });
 
-    await this.afterMessageCreated(userId, conversationId, participantIds, message.id);
+    await this.afterMessageCreated(
+      userId,
+      conversationId,
+      participantIds,
+      message.id,
+    );
     return this.toMessageDto(message, userId);
   }
 
@@ -1883,12 +2501,16 @@ export class ChatsService {
     messageIds: string[],
   ): Promise<ChatMessageDto[]> {
     await this.assertParticipant(userId, targetConversationId);
-    const uniqueIds = [...new Set(messageIds.map((id) => id.trim()).filter(Boolean))];
+    const uniqueIds = [
+      ...new Set(messageIds.map((id) => id.trim()).filter(Boolean)),
+    ];
     if (uniqueIds.length === 0) {
       throw new BadRequestException('Нечего пересылать');
     }
     if (uniqueIds.length > 20) {
-      throw new BadRequestException('За раз можно переслать не больше 20 сообщений');
+      throw new BadRequestException(
+        'За раз можно переслать не больше 20 сообщений',
+      );
     }
 
     const sources = await this.prisma.message.findMany({
@@ -1908,7 +2530,9 @@ export class ChatsService {
     const byId = new Map(sources.map((item) => [item.id, item]));
     const ordered = uniqueIds.map((id) => byId.get(id)!);
 
-    const sourceConversationIds = [...new Set(ordered.map((item) => item.conversationId))];
+    const sourceConversationIds = [
+      ...new Set(ordered.map((item) => item.conversationId)),
+    ];
     await Promise.all(
       sourceConversationIds.map((id) => this.assertParticipant(userId, id)),
     );
@@ -1923,7 +2547,9 @@ export class ChatsService {
         select: { id: true },
       });
       if (blockedMe) {
-        throw new ForbiddenException('Вас заблокировали. Отправлять сообщения нельзя.');
+        throw new ForbiddenException(
+          'Вас заблокировали. Отправлять сообщения нельзя.',
+        );
       }
     }
 
@@ -1973,7 +2599,12 @@ export class ChatsService {
         );
       }
 
-      await this.afterMessageCreated(userId, targetConversationId, participantIds, message.id);
+      await this.afterMessageCreated(
+        userId,
+        targetConversationId,
+        participantIds,
+        message.id,
+      );
       created.push(await this.toMessageDto(message, userId));
     }
 
@@ -1999,7 +2630,9 @@ export class ChatsService {
       include: { sender: { select: { nickname: true } } },
     });
     if (!replyTo) {
-      throw new BadRequestException('Сообщение для ответа не найдено в этом чате');
+      throw new BadRequestException(
+        'Сообщение для ответа не найдено в этом чате',
+      );
     }
 
     const hasMedia =
@@ -2078,7 +2711,12 @@ export class ChatsService {
     );
 
     await this.emitUnreadForUsers(participantIds);
-    void this.pushNewChatMessage(userId, conversationId, participantIds, message);
+    void this.pushNewChatMessage(
+      userId,
+      conversationId,
+      participantIds,
+      message,
+    );
   }
 
   private async pushNewChatMessage(
@@ -2123,7 +2761,9 @@ export class ChatsService {
     if (kind === 'dice_roll') {
       body = `${senderName}: бросок кубиков`;
     } else if (message.body?.trim()) {
-      body = isGroup ? `${senderName}: ${message.body.trim()}` : message.body.trim();
+      body = isGroup
+        ? `${senderName}: ${message.body.trim()}`
+        : message.body.trim();
     } else if (message.attachmentName) {
       body = isGroup ? `${senderName}: вложение` : 'Вложение';
     } else {
@@ -2137,7 +2777,9 @@ export class ChatsService {
       url: `/chats/${encodeURIComponent(conversationId)}`,
     };
 
-    await Promise.all(recipients.map((id) => this.pushSubscriptions.sendToUser(id, payload)));
+    await Promise.all(
+      recipients.map((id) => this.pushSubscriptions.sendToUser(id, payload)),
+    );
   }
 
   async markRead(userId: string, conversationId: string) {
@@ -2191,11 +2833,12 @@ export class ChatsService {
 
     const roomName = `chat:${conversationId}`;
     const avatarUrl = await this.getAvatarUrl(userId, 'display');
-    const look =
-      (await this.rewardsService.getLooksForUsers([userId])).get(userId) ?? {
-        badges: [],
-        avatarFrameId: null,
-      };
+    const look = (await this.rewardsService.getLooksForUsers([userId])).get(
+      userId,
+    ) ?? {
+      badges: [],
+      avatarFrameId: null,
+    };
     const token = new AccessToken(apiKey, apiSecret, {
       identity: userId,
       name: user?.nickname ?? userId,
@@ -2286,7 +2929,10 @@ export class ChatsService {
   }
 
   /** Offline callees only — online users already got `call:invite` over socket. */
-  private async pushVoiceCallInvite(targets: string[], invite: CallInvitePayload) {
+  private async pushVoiceCallInvite(
+    targets: string[],
+    invite: CallInvitePayload,
+  ) {
     if (targets.length === 0) {
       return;
     }
@@ -2296,7 +2942,9 @@ export class ChatsService {
       invite.isGroup && invite.conversationTitle?.trim()
         ? invite.conversationTitle.trim()
         : caller;
-    const body = invite.isGroup ? `${caller} звонит в группу` : 'Входящий звонок';
+    const body = invite.isGroup
+      ? `${caller} звонит в группу`
+      : 'Входящий звонок';
 
     const payload = {
       title,
@@ -2306,7 +2954,9 @@ export class ChatsService {
       url: `/chats/${encodeURIComponent(invite.conversationId)}`,
     };
 
-    await Promise.all(targets.map((id) => this.pushSubscriptions.sendToUser(id, payload)));
+    await Promise.all(
+      targets.map((id) => this.pushSubscriptions.sendToUser(id, payload)),
+    );
   }
 
   async getActiveVoiceCall(userId: string, conversationId: string) {
@@ -2331,7 +2981,11 @@ export class ChatsService {
     };
   }
 
-  async acceptVoiceCall(userId: string, conversationId: string, callId: string) {
+  async acceptVoiceCall(
+    userId: string,
+    conversationId: string,
+    callId: string,
+  ) {
     await this.assertParticipant(userId, conversationId);
     const call = this.requireVoiceCall(callId, conversationId);
 
@@ -2421,7 +3075,11 @@ export class ChatsService {
     return signal;
   }
 
-  async declineVoiceCall(userId: string, conversationId: string, callId: string) {
+  async declineVoiceCall(
+    userId: string,
+    conversationId: string,
+    callId: string,
+  ) {
     await this.assertParticipant(userId, conversationId);
     const call = this.requireVoiceCall(callId, conversationId);
     if (!call.ringingUserIds.includes(userId)) {
@@ -2471,7 +3129,9 @@ export class ChatsService {
 
     // Solo cancel: caller (or last lobby occupant) leaves before anyone else joins.
     const aloneBeforeLeave =
-      inJoined && call.joinedUserIds.length === 1 && call.joinedUserIds[0] === userId;
+      inJoined &&
+      call.joinedUserIds.length === 1 &&
+      call.joinedUserIds[0] === userId;
 
     const signal = {
       callId: call.callId,
@@ -2507,7 +3167,10 @@ export class ChatsService {
       }
       if (aloneBeforeLeave) {
         try {
-          await this.postMissedVoiceCallMessage(call.fromUserId, call.conversationId);
+          await this.postMissedVoiceCallMessage(
+            call.fromUserId,
+            call.conversationId,
+          );
         } catch {
           // best-effort
         }
@@ -2588,7 +3251,10 @@ export class ChatsService {
     }
 
     try {
-      await this.postMissedVoiceCallMessage(call.fromUserId, call.conversationId);
+      await this.postMissedVoiceCallMessage(
+        call.fromUserId,
+        call.conversationId,
+      );
     } catch {
       // best-effort
     }
@@ -2659,7 +3325,10 @@ export class ChatsService {
     );
   }
 
-  private async postMissedVoiceCallMessage(callerId: string, conversationId: string) {
+  private async postMissedVoiceCallMessage(
+    callerId: string,
+    conversationId: string,
+  ) {
     const now = new Date();
     const message = await this.prisma.message.create({
       data: {
@@ -2681,7 +3350,12 @@ export class ChatsService {
         where: {
           conversationId_userId: { conversationId, userId: callerId },
         },
-        create: { conversationId, userId: callerId, lastReadAt: now, hiddenAt: null },
+        create: {
+          conversationId,
+          userId: callerId,
+          lastReadAt: now,
+          hiddenAt: null,
+        },
         update: { lastReadAt: now, hiddenAt: null },
       }),
       ...participantIds
@@ -2749,7 +3423,11 @@ export class ChatsService {
     }
   }
 
-  async deleteConversation(userId: string, conversationId: string, forEveryone = false) {
+  async deleteConversation(
+    userId: string,
+    conversationId: string,
+    forEveryone = false,
+  ) {
     const membership = await this.prisma.conversationParticipant.findUnique({
       where: {
         conversationId_userId: { conversationId, userId },
@@ -2766,7 +3444,9 @@ export class ChatsService {
     }
 
     if (conversation.type === ConversationType.GROUP && forEveryone) {
-      throw new BadRequestException('Групповой чат нельзя удалить для всех — выйдите из него');
+      throw new BadRequestException(
+        'Групповой чат нельзя удалить для всех — выйдите из него',
+      );
     }
 
     if (!forEveryone) {
@@ -2826,7 +3506,11 @@ export class ChatsService {
     for (const conversation of conversations) {
       const last = conversation.messages[0];
       const hiddenAt = conversation.reads[0]?.hiddenAt;
-      if (!last || last.senderId === userId || isHiddenForUser(hiddenAt, last.createdAt)) {
+      if (
+        !last ||
+        last.senderId === userId ||
+        isHiddenForUser(hiddenAt, last.createdAt)
+      ) {
         continue;
       }
       const lastReadAt = conversation.reads[0]?.lastReadAt;
@@ -2953,7 +3637,9 @@ export class ChatsService {
     });
 
     const summaries = await Promise.all(
-      participantIds.map((id) => this.getConversationSummary(id, conversationId)),
+      participantIds.map((id) =>
+        this.getConversationSummary(id, conversationId),
+      ),
     );
     for (let i = 0; i < participantIds.length; i += 1) {
       this.realtime.emitConversationUpdated([participantIds[i]], summaries[i]);
@@ -3000,8 +3686,8 @@ export class ChatsService {
     const lastReadAt = myRead?.lastReadAt;
     const unread = Boolean(
       last &&
-        last.senderId !== userId &&
-        (!lastReadAt || last.createdAt > lastReadAt),
+      last.senderId !== userId &&
+      (!lastReadAt || last.createdAt > lastReadAt),
     );
 
     let attachmentKind: ChatAttachmentKind | null = null;
@@ -3012,7 +3698,12 @@ export class ChatsService {
     const lastMessage = last
       ? {
           id: last.id,
-          body: this.previewBodyForViewer(last.body, last.kind, last.senderId, userId),
+          body: this.previewBodyForViewer(
+            last.body,
+            last.kind,
+            last.senderId,
+            userId,
+          ),
           senderId: last.senderId,
           createdAt: last.createdAt.toISOString(),
           hasImage: attachmentKind === 'image',
@@ -3033,8 +3724,11 @@ export class ChatsService {
         gameId: conversation.gameId,
         peer: null,
         memberCount: conversation.participants.length,
-        membersPreview: await Promise.all(previewUsers.map((user) => this.toPeerDto(user))),
+        membersPreview: await Promise.all(
+          previewUsers.map((user) => this.toPeerDto(user)),
+        ),
         peerLastReadAt: null,
+        myLastReadAt: myRead?.lastReadAt.toISOString() ?? null,
         myRole: toChatMemberRole(membership.role),
         lastMessage,
         unread,
@@ -3045,7 +3739,9 @@ export class ChatsService {
         isPinned: Boolean(myRead?.pinnedAt),
         pinSortOrder: myRead?.pinSortOrder ?? null,
         background: await this.resolveConversationBackground(conversation),
-        updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
+        updatedAt: (
+          conversation.lastMessageAt ?? conversation.updatedAt
+        ).toISOString(),
       };
     }
 
@@ -3057,7 +3753,9 @@ export class ChatsService {
       throw new NotFoundException('Собеседник не найден');
     }
 
-    const peerRead = conversation.reads.find((read) => read.userId === peerUser.id);
+    const peerRead = conversation.reads.find(
+      (read) => read.userId === peerUser.id,
+    );
     const favorite = await this.prisma.wandererReaction.findUnique({
       where: {
         viewerId_targetUserId: {
@@ -3087,29 +3785,38 @@ export class ChatsService {
       memberCount: 2,
       membersPreview: [],
       peerLastReadAt: peerRead?.lastReadAt.toISOString() ?? null,
+      myLastReadAt: myRead?.lastReadAt.toISOString() ?? null,
       lastMessage,
       unread,
       isFavorite:
         favorite?.type === 'FAVORITE' && !flags.blockedByMe && !flags.blockedMe,
       peerFavoritedMe:
-        peerFavorite?.type === 'FAVORITE' && !flags.blockedByMe && !flags.blockedMe,
+        peerFavorite?.type === 'FAVORITE' &&
+        !flags.blockedByMe &&
+        !flags.blockedMe,
       blockedByMe: flags.blockedByMe,
       blockedMe: flags.blockedMe,
       isPinned: Boolean(myRead?.pinnedAt),
       pinSortOrder: myRead?.pinSortOrder ?? null,
       background: await this.resolveConversationBackground(conversation),
-      updatedAt: (conversation.lastMessageAt ?? conversation.updatedAt).toISOString(),
+      updatedAt: (
+        conversation.lastMessageAt ?? conversation.updatedAt
+      ).toISOString(),
     };
   }
 
   private async getBlockFlags(userId: string, peerId: string) {
     const [blockedByMe, blockedMe] = await Promise.all([
       this.prisma.userBlock.findUnique({
-        where: { blockerId_blockedId: { blockerId: userId, blockedId: peerId } },
+        where: {
+          blockerId_blockedId: { blockerId: userId, blockedId: peerId },
+        },
         select: { id: true },
       }),
       this.prisma.userBlock.findUnique({
-        where: { blockerId_blockedId: { blockerId: peerId, blockedId: userId } },
+        where: {
+          blockerId_blockedId: { blockerId: peerId, blockedId: userId },
+        },
         select: { id: true },
       }),
     ]);
@@ -3148,7 +3855,10 @@ export class ChatsService {
     return conversation;
   }
 
-  private async assertDirectConversation(userId: string, conversationId: string) {
+  private async assertDirectConversation(
+    userId: string,
+    conversationId: string,
+  ) {
     const conversation = await this.assertParticipant(userId, conversationId);
     if (conversation.type !== ConversationType.DIRECT) {
       throw new BadRequestException('Действие доступно только в личном чате');
@@ -3273,7 +3983,10 @@ export class ChatsService {
       select: { entityId: true, collection: true },
     });
 
-    const uniqueCollections = new Map<string, { entityId: string; collection: string }>();
+    const uniqueCollections = new Map<
+      string,
+      { entityId: string; collection: string }
+    >();
     for (const row of mediaRows) {
       if (!isMessageAttachmentCollection(row.collection)) {
         continue;
@@ -3337,10 +4050,11 @@ export class ChatsService {
       const primary = media[0];
       const kind = attachmentKindFromMime(primary.mimeType);
       const urls = await this.mediaService.getCollectionUrls(media);
-      const image = kind === 'image' && Object.keys(urls).length > 0 ? urls : null;
+      const image =
+        kind === 'image' && Object.keys(urls).length > 0 ? urls : null;
       const fileUrl =
         kind === 'image'
-          ? urls.original ?? urls.large ?? urls.medium ?? urls.thumb ?? null
+          ? (urls.original ?? urls.large ?? urls.medium ?? urls.thumb ?? null)
           : await this.mediaService.getPublicUrl(primary);
       const fallbackName =
         kind === 'image' ? 'Фото' : kind === 'audio' ? 'Аудио' : 'Файл';
@@ -3367,7 +4081,8 @@ export class ChatsService {
     if (!raw) return null;
     try {
       const values: unknown = JSON.parse(raw);
-      if (!Array.isArray(values) || values.length < 8 || values.length > 128) return null;
+      if (!Array.isArray(values) || values.length < 8 || values.length > 128)
+        return null;
       const waveform = values
         .map(Number)
         .filter(Number.isFinite)
@@ -3407,7 +4122,9 @@ export class ChatsService {
       return 'Бросок костей';
     }
     const forViewer =
-      payload.hidden && senderId !== viewerId ? redactDiceRollPayload(payload) : payload;
+      payload.hidden && senderId !== viewerId
+        ? redactDiceRollPayload(payload)
+        : payload;
     return diceRollPreviewText(forViewer, { isSender: senderId === viewerId });
   }
 
@@ -3448,16 +4165,18 @@ export class ChatsService {
       forwardedFromMessageId?: string | null;
     },
     viewerId?: string,
+    reactions?: Array<{ emoji: string; count: number; reactedByMe: boolean }>,
   ): Promise<ChatMessageDto> {
     const senderUser = await this.prisma.user.findUnique({
       where: { id: message.senderId },
       select: { id: true, nickname: true },
     });
-    const look =
-      (await this.rewardsService.getLooksForUsers([message.senderId])).get(message.senderId) ?? {
-        badges: [],
-        avatarFrameId: null,
-      };
+    const look = (
+      await this.rewardsService.getLooksForUsers([message.senderId])
+    ).get(message.senderId) ?? {
+      badges: [],
+      avatarFrameId: null,
+    };
     const sender: ChatMessageSender = {
       id: message.senderId,
       nickname: senderUser?.nickname ?? 'Игрок',
@@ -3478,7 +4197,12 @@ export class ChatsService {
       conversationId: message.conversationId,
       senderId: message.senderId,
       sender,
-      body: this.bodyForViewer(message.body, message.kind, message.senderId, viewerId),
+      body: this.bodyForViewer(
+        message.body,
+        message.kind,
+        message.senderId,
+        viewerId,
+      ),
       kind: messageKind,
       createdAt: message.createdAt.toISOString(),
       image: primary?.image ?? null,
@@ -3500,6 +4224,9 @@ export class ChatsService {
               messageId: message.forwardedFromMessageId ?? null,
             }
           : null,
+      reactions:
+        reactions ??
+        (await this.getMessageReactions(message.id, viewerId ?? '')),
     };
   }
 
@@ -3569,11 +4296,12 @@ export class ChatsService {
     nickname: string;
     lastSeenAt: Date | null;
   }): Promise<ChatPeer> {
-    const look =
-      (await this.rewardsService.getLooksForUsers([peer.id])).get(peer.id) ?? {
-        badges: [],
-        avatarFrameId: null,
-      };
+    const look = (await this.rewardsService.getLooksForUsers([peer.id])).get(
+      peer.id,
+    ) ?? {
+      badges: [],
+      avatarFrameId: null,
+    };
     return {
       id: peer.id,
       nickname: peer.nickname,

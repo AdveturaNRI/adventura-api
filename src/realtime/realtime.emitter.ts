@@ -81,6 +81,17 @@ export class RealtimeEmitter {
     this.emitToUsers(userIds, REALTIME_EVENTS.MESSAGE_NEW, payload);
   }
 
+  emitMessageReaction(userIds: string[], payload: unknown) {
+    this.emitToUsers(userIds, REALTIME_EVENTS.MESSAGE_REACTION, payload);
+  }
+
+  emitReactionUnreadSync(
+    userId: string,
+    payload: { conversationId: string; count: number },
+  ) {
+    this.emitToUser(userId, REALTIME_EVENTS.REACTION_UNREAD_SYNC, payload);
+  }
+
   emitConversationUpdated(userIds: string[], payload: unknown) {
     this.emitToUsers(userIds, REALTIME_EVENTS.CONVERSATION_UPDATED, payload);
   }
@@ -89,7 +100,10 @@ export class RealtimeEmitter {
     this.emitToUsers(userIds, REALTIME_EVENTS.CONVERSATION_READ, payload);
   }
 
-  emitConversationDeleted(userIds: string[], payload: ConversationDeletedPayload) {
+  emitConversationDeleted(
+    userIds: string[],
+    payload: ConversationDeletedPayload,
+  ) {
     this.emitToUsers(userIds, REALTIME_EVENTS.CONVERSATION_DELETED, payload);
   }
 

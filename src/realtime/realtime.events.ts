@@ -1,5 +1,7 @@
 export const REALTIME_EVENTS = {
   MESSAGE_NEW: 'message:new',
+  MESSAGE_REACTION: 'message:reaction',
+  REACTION_UNREAD_SYNC: 'message-reaction:unread-sync',
   CONVERSATION_UPDATED: 'conversation:updated',
   CONVERSATION_READ: 'conversation:read',
   CONVERSATION_DELETED: 'conversation:deleted',

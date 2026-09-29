@@ -12,7 +12,10 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import {
+  FileFieldsInterceptor,
+  FileInterceptor,
+} from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -28,9 +31,11 @@ import {
   SetGroupMemberRoleDto,
 } from './dto/group-manage.dto';
 import { ListMessagesQueryDto } from './dto/list-messages.dto';
+import { MarkVisibleMessagesReadDto } from './dto/mark-visible-messages-read.dto';
 import { ReorderPinnedChatsDto } from './dto/reorder-pinned-chats.dto';
 import { SendDiceRollDto } from './dto/send-dice-roll.dto';
 import { SendMessageDto } from './dto/send-message.dto';
+import { SetMessageReactionDto } from './dto/set-message-reaction.dto';
 import { ChatsService } from './chats.service';
 
 @UseGuards(JwtAuthGuard)
@@ -44,8 +49,14 @@ export class ChatsController {
   }
 
   @Put('pins/order')
-  reorderPinned(@CurrentUser() user: AuthUser, @Body() dto: ReorderPinnedChatsDto) {
-    return this.chatsService.reorderPinnedConversations(user.id, dto.conversationIds);
+  reorderPinned(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: ReorderPinnedChatsDto,
+  ) {
+    return this.chatsService.reorderPinnedConversations(
+      user.id,
+      dto.conversationIds,
+    );
   }
 
   @Post('groups')
@@ -59,12 +70,18 @@ export class ChatsController {
   }
 
   @Post('with/:userId')
-  findOrCreate(@CurrentUser() user: AuthUser, @Param('userId') peerUserId: string) {
+  findOrCreate(
+    @CurrentUser() user: AuthUser,
+    @Param('userId') peerUserId: string,
+  ) {
     return this.chatsService.findOrCreateWith(user.id, peerUserId);
   }
 
   @Delete('with/:userId/block')
-  unblockPeerByUserId(@CurrentUser() user: AuthUser, @Param('userId') peerUserId: string) {
+  unblockPeerByUserId(
+    @CurrentUser() user: AuthUser,
+    @Param('userId') peerUserId: string,
+  ) {
     return this.chatsService.unblockPeerByUserId(user.id, peerUserId);
   }
 
@@ -79,7 +96,10 @@ export class ChatsController {
   }
 
   @Get(':id/members')
-  listMembers(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+  listMembers(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+  ) {
     return this.chatsService.listMembers(user.id, conversationId);
   }
 
@@ -98,7 +118,11 @@ export class ChatsController {
     @Param('id') conversationId: string,
     @Body() dto: AddGroupMembersDto,
   ) {
-    return this.chatsService.addGroupMembers(user.id, conversationId, dto.memberIds);
+    return this.chatsService.addGroupMembers(
+      user.id,
+      conversationId,
+      dto.memberIds,
+    );
   }
 
   @Delete(':id/members/:userId')
@@ -107,7 +131,11 @@ export class ChatsController {
     @Param('id') conversationId: string,
     @Param('userId') targetUserId: string,
   ) {
-    return this.chatsService.removeGroupMember(user.id, conversationId, targetUserId);
+    return this.chatsService.removeGroupMember(
+      user.id,
+      conversationId,
+      targetUserId,
+    );
   }
 
   @Put(':id/members/:userId/role')
@@ -139,13 +167,24 @@ export class ChatsController {
   }
 
   @Delete(':id/group')
-  deleteGroup(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+  deleteGroup(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+  ) {
     return this.chatsService.deleteGroup(user.id, conversationId);
   }
 
   @Post(':id/leave')
-  leaveGroup(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+  leaveGroup(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+  ) {
     return this.chatsService.leaveGroup(user.id, conversationId);
+  }
+
+  @Get('reactions/order')
+  getChatReactionOrder(@CurrentUser() user: AuthUser) {
+    return this.chatsService.getChatReactionOrder(user.id);
   }
 
   @Get(':id/messages')
@@ -159,6 +198,56 @@ export class ChatsController {
       conversationId,
       query.cursor,
       query.limit ?? 40,
+    );
+  }
+
+  @Put(':id/messages/:messageId/reaction')
+  setMessageReaction(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Param('messageId') messageId: string,
+    @Body() dto: SetMessageReactionDto,
+  ) {
+    return this.chatsService.setMessageReaction(
+      user.id,
+      conversationId,
+      messageId,
+      dto.emoji,
+    );
+  }
+
+  @Delete(':id/messages/:messageId/reaction')
+  removeMessageReaction(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Param('messageId') messageId: string,
+  ) {
+    return this.chatsService.removeMessageReaction(
+      user.id,
+      conversationId,
+      messageId,
+    );
+  }
+
+  @Get(':id/reactions/unread')
+  unreadMessageReactionCount(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+  ) {
+    return this.chatsService.unreadMessageReactionCount(
+      user.id,
+      conversationId,
+    );
+  }
+
+  @Post(':id/reactions/unread/next')
+  openNextUnreadMessageReaction(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+  ) {
+    return this.chatsService.openNextUnreadMessageReaction(
+      user.id,
+      conversationId,
     );
   }
 
@@ -214,7 +303,11 @@ export class ChatsController {
     @Param('id') conversationId: string,
     @Body() dto: ForwardMessagesDto,
   ) {
-    return this.chatsService.forwardMessages(user.id, conversationId, dto.messageIds);
+    return this.chatsService.forwardMessages(
+      user.id,
+      conversationId,
+      dto.messageIds,
+    );
   }
 
   @Post(':id/read')
@@ -222,19 +315,41 @@ export class ChatsController {
     return this.chatsService.markRead(user.id, conversationId);
   }
 
+  @Post(':id/read-visible')
+  markVisibleMessagesRead(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+    @Body() dto: MarkVisibleMessagesReadDto,
+  ) {
+    return this.chatsService.markVisibleMessagesRead(
+      user.id,
+      conversationId,
+      dto.messageIds,
+    );
+  }
+
   /** LiveKit token for in-chat voice. Room is created on first join. */
   @Post(':id/voice/token')
-  createVoiceToken(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+  createVoiceToken(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+  ) {
     return this.chatsService.createVoiceToken(user.id, conversationId);
   }
 
   @Post(':id/voice/invite')
-  inviteVoiceCall(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+  inviteVoiceCall(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+  ) {
     return this.chatsService.inviteVoiceCall(user.id, conversationId);
   }
 
   @Get(':id/voice/active')
-  getActiveVoiceCall(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+  getActiveVoiceCall(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+  ) {
     return this.chatsService.getActiveVoiceCall(user.id, conversationId);
   }
 
@@ -244,7 +359,11 @@ export class ChatsController {
     @Param('id') conversationId: string,
     @Body() body: { callId?: string },
   ) {
-    return this.chatsService.acceptVoiceCall(user.id, conversationId, body.callId ?? '');
+    return this.chatsService.acceptVoiceCall(
+      user.id,
+      conversationId,
+      body.callId ?? '',
+    );
   }
 
   @Post(':id/voice/join')
@@ -253,7 +372,11 @@ export class ChatsController {
     @Param('id') conversationId: string,
     @Body() body: { callId?: string },
   ) {
-    return this.chatsService.joinVoiceCall(user.id, conversationId, body.callId);
+    return this.chatsService.joinVoiceCall(
+      user.id,
+      conversationId,
+      body.callId,
+    );
   }
 
   @Post(':id/voice/decline')
@@ -262,7 +385,11 @@ export class ChatsController {
     @Param('id') conversationId: string,
     @Body() body: { callId?: string },
   ) {
-    return this.chatsService.declineVoiceCall(user.id, conversationId, body.callId ?? '');
+    return this.chatsService.declineVoiceCall(
+      user.id,
+      conversationId,
+      body.callId ?? '',
+    );
   }
 
   @Post(':id/voice/end')
@@ -271,11 +398,18 @@ export class ChatsController {
     @Param('id') conversationId: string,
     @Body() body: { callId?: string },
   ) {
-    return this.chatsService.endVoiceCall(user.id, conversationId, body.callId ?? '');
+    return this.chatsService.endVoiceCall(
+      user.id,
+      conversationId,
+      body.callId ?? '',
+    );
   }
 
   @Post(':id/block')
-  blockPeer(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+  blockPeer(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+  ) {
     return this.chatsService.blockPeer(user.id, conversationId);
   }
 
@@ -292,7 +426,9 @@ export class ChatsController {
     @Body() body: { kind?: string; presetId?: string },
     @UploadedFile() file?: Express.Multer.File,
   ) {
-    const kindRaw = String(body?.kind ?? '').trim().toLowerCase();
+    const kindRaw = String(body?.kind ?? '')
+      .trim()
+      .toLowerCase();
     const kind =
       kindRaw === 'default' ||
       kindRaw === 'preset' ||
@@ -302,15 +438,22 @@ export class ChatsController {
         : file
           ? 'custom'
           : 'clear';
-    return this.chatsService.setConversationBackground(user.id, conversationId, {
-      kind,
-      presetId: body?.presetId,
-      file: file ?? null,
-    });
+    return this.chatsService.setConversationBackground(
+      user.id,
+      conversationId,
+      {
+        kind,
+        presetId: body?.presetId,
+        file: file ?? null,
+      },
+    );
   }
 
   @Delete(':id/block')
-  unblockPeer(@CurrentUser() user: AuthUser, @Param('id') conversationId: string) {
+  unblockPeer(
+    @CurrentUser() user: AuthUser,
+    @Param('id') conversationId: string,
+  ) {
     return this.chatsService.unblockPeer(user.id, conversationId);
   }
 
