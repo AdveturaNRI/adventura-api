@@ -243,9 +243,18 @@ export class AuthService {
       throw new UnauthorizedException('Сессия истекла, войдите снова');
     }
 
-    await this.prisma.refreshToken.delete({ where: { id: storedToken.id } });
+    // Keep the same opaque refresh token and extend its lifetime. Rotating it
+    // before the client has received the response makes a short network loss
+    // (for example, while switching VPN) irreversible: the server has already
+    // invalidated the only token the client still knows. The access JWT is
+    // still renewed on every refresh; logout and password-reset revocation
+    // continue to delete this server-side record.
+    await this.prisma.refreshToken.update({
+      where: { id: storedToken.id },
+      data: { expiresAt: this.getRefreshTokenExpiry() },
+    });
 
-    return this.buildAuthResponse(storedToken.user);
+    return this.buildAuthResponse(storedToken.user, undefined, refreshToken);
   }
 
   async logout(refreshToken: string): Promise<void> {
@@ -575,6 +584,7 @@ export class AuthService {
   private async buildAuthResponse(
     user: UserRow,
     linkedProviders?: LinkedOAuthProvider[],
+    existingRefreshToken?: string,
   ): Promise<AuthResponse> {
     const providers =
       linkedProviders ??
@@ -592,7 +602,8 @@ export class AuthService {
       isGuest: authUser.isGuest,
     });
 
-    const refreshToken = await this.createRefreshToken(authUser.id);
+    const refreshToken =
+      existingRefreshToken ?? (await this.createRefreshToken(authUser.id));
 
     return {
       accessToken,
