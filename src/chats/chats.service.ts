@@ -2967,6 +2967,7 @@ export class ChatsService {
       return null;
     }
     const isJoined = call.joinedUserIds.includes(userId);
+    const isRinging = call.ringingUserIds.includes(userId);
     return {
       callId: call.callId,
       conversationId: call.conversationId,
@@ -2978,6 +2979,8 @@ export class ChatsService {
       joinedCount: call.joinedUserIds.length,
       canJoin: !isJoined,
       isJoined,
+      /** Still in the ring window — client should show Accept UI even if WS invite was missed. */
+      isRinging,
     };
   }
 
@@ -3133,12 +3136,6 @@ export class ChatsService {
       call.joinedUserIds.length === 1 &&
       call.joinedUserIds[0] === userId;
 
-    const signal = {
-      callId: call.callId,
-      conversationId: call.conversationId,
-      byUserId: userId,
-    };
-
     if (inRinging) {
       call.ringingUserIds = call.ringingUserIds.filter((id) => id !== userId);
     }
@@ -3153,18 +3150,8 @@ export class ChatsService {
       const ringingLeft = [...call.ringingUserIds];
       this.clearVoiceCallTimers(call);
       this.activeVoiceCalls.delete(callId);
-      // Notify whole chat so join banners clear, not only ringing callees.
-      let notify = ringingLeft;
-      try {
-        const participants = await this.getParticipantIds(conversationId);
-        notify = uniqueIds([...ringingLeft, ...participants]);
-      } catch {
-        // fall back to ringing only
-      }
-      if (notify.length > 0) {
-        // Include the actor: other devices of the same account may still be ringing.
-        this.realtime.emitCallEnded(notify, signal);
-      }
+      // Whole chat — join banners must clear, not only joined/ringing.
+      await this.emitCallEndedToConversation(call, userId, ringingLeft);
       if (aloneBeforeLeave) {
         try {
           await this.postMissedVoiceCallMessage(
@@ -3193,7 +3180,7 @@ export class ChatsService {
     return { ok: true as const };
   }
 
-  /** Ring phase over: dismiss callee UI, keep lobby open for late join. */
+  /** Ring phase over: dismiss callee Accept UI, keep lobby open for late join. */
   private async stopVoiceCallRinging(callId: string) {
     const call = this.activeVoiceCalls.get(callId);
     if (!call || call.ringingUserIds.length === 0) {
@@ -3204,20 +3191,18 @@ export class ChatsService {
     call.ringingUserIds = [];
     this.clearVoiceCallRingTimer(call);
 
-    const signal = {
-      callId: call.callId,
-      conversationId: call.conversationId,
-      byUserId: call.fromUserId,
-    };
-    this.realtime.emitCallEnded(stillRinging, signal);
-
-    // Drop waiting tiles for people still in the room (usually the caller).
+    // Do NOT emit `call:ended` here — that tore down the callee as if the room
+    // died, leaving only the «Вернуться» banner with no Accept/Decline.
+    // Self-decline dismisses incoming on that device; joined peers drop the tile.
     for (const timedOutId of stillRinging) {
-      this.realtime.emitCallDeclined(call.joinedUserIds, {
-        callId: call.callId,
-        conversationId: call.conversationId,
-        byUserId: timedOutId,
-      });
+      this.realtime.emitCallDeclined(
+        uniqueIds([timedOutId, ...call.joinedUserIds]),
+        {
+          callId: call.callId,
+          conversationId: call.conversationId,
+          byUserId: timedOutId,
+        },
+      );
     }
   }
 
@@ -3236,19 +3221,16 @@ export class ChatsService {
     }
 
     const stillRinging = [...call.ringingUserIds];
+    const snapshot = { ...call, ringingUserIds: stillRinging };
     call.ringingUserIds = [];
     this.clearVoiceCallRingTimer(call);
     this.activeVoiceCalls.delete(callId);
 
-    const signal = {
-      callId: call.callId,
-      conversationId: call.conversationId,
-      byUserId: call.fromUserId,
-    };
-    const notify = uniqueIds([...call.joinedUserIds, ...stillRinging]);
-    if (notify.length > 0) {
-      this.realtime.emitCallEnded(notify, signal);
-    }
+    await this.emitCallEndedToConversation(
+      snapshot,
+      call.fromUserId,
+      stillRinging,
+    );
 
     try {
       await this.postMissedVoiceCallMessage(
@@ -3267,18 +3249,45 @@ export class ChatsService {
       return;
     }
 
-    const notify = uniqueIds([...call.joinedUserIds, ...call.ringingUserIds]);
+    const snapshot = {
+      ...call,
+      joinedUserIds: [...call.joinedUserIds],
+      ringingUserIds: [...call.ringingUserIds],
+    };
     this.clearVoiceCallTimers(call);
     this.activeVoiceCalls.delete(callId);
 
-    if (notify.length === 0) {
-      return;
-    }
-    this.realtime.emitCallEnded(notify, {
+    await this.emitCallEndedToConversation(snapshot, call.fromUserId);
+  }
+
+  /** Notify every chat member so join banners clear (not only lobby occupants). */
+  private async emitCallEndedToConversation(
+    call: Pick<
+      ActiveVoiceCall,
+      'callId' | 'conversationId' | 'joinedUserIds' | 'ringingUserIds'
+    >,
+    byUserId: string,
+    extraUserIds: string[] = [],
+  ) {
+    const signal = {
       callId: call.callId,
       conversationId: call.conversationId,
-      byUserId: call.fromUserId,
-    });
+      byUserId,
+    };
+    let notify = uniqueIds([
+      ...extraUserIds,
+      ...call.joinedUserIds,
+      ...call.ringingUserIds,
+    ]);
+    try {
+      const participants = await this.getParticipantIds(call.conversationId);
+      notify = uniqueIds([...notify, ...participants]);
+    } catch {
+      // fall back to joined/ringing/extra
+    }
+    if (notify.length > 0) {
+      this.realtime.emitCallEnded(notify, signal);
+    }
   }
 
   private clearVoiceCallRingTimer(call: ActiveVoiceCall) {
@@ -3417,8 +3426,15 @@ export class ChatsService {
         continue;
       }
       if (now - call.createdAt > VOICE_CALL_TTL_MS) {
+        const snapshot = {
+          ...call,
+          joinedUserIds: [...call.joinedUserIds],
+          ringingUserIds: [...call.ringingUserIds],
+        };
         this.clearVoiceCallTimers(call);
         this.activeVoiceCalls.delete(id);
+        // Silent TTL drop used to leave join banners stuck until the next poll.
+        void this.emitCallEndedToConversation(snapshot, call.fromUserId);
       }
     }
   }
