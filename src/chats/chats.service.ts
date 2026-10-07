@@ -1957,7 +1957,7 @@ export class ChatsService {
     await this.assertParticipant(userId, conversationId);
     const message = await this.prisma.message.findFirst({
       where: { id: messageId, conversationId, kind: MessageKind.USER },
-      select: { id: true },
+      select: { id: true, senderId: true },
     });
     if (!message) throw new NotFoundException('Сообщение не найдено');
 
@@ -1971,9 +1971,9 @@ export class ChatsService {
       create: { userId, emoji, useCount: 1 },
       update: { useCount: { increment: 1 } },
     });
-    const recipients = (await this.getParticipantIds(conversationId)).filter(
-      (id) => id !== userId,
-    );
+    // Push/receipt only for the message author — not every group member.
+    const recipients =
+      message.senderId !== userId ? [message.senderId] : [];
     await Promise.all(
       recipients.map((recipientId) =>
         this.prisma.messageReactionReceipt.upsert({
