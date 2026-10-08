@@ -113,29 +113,39 @@ jobs:
           docker service inspect "$api_service" >/dev/null
 
           echo "Starting migration service: $migration_service"
+          # Digest pin so we can recognize "our" migrate task among Swarm history.
+          image_digest="${image##*@}"
           docker service update --detach=true --with-registry-auth --force \
             --image "$image" "$migration_service"
 
           deadline=$(( $(date +%s) + 600 ))
           while :; do
-            # Prefer the newest task; ignore older Complete rows when force-updating.
-            task_line="$(docker service ps --no-trunc --format '{{.ID}} {{.CurrentState}}' "$migration_service" | head -n 1)"
-            task_state="$(printf '%s\n' "$task_line" | awk '{ $1=""; sub(/^ /,""); print }')"
-            echo "migrate: $task_state"
-            case "$task_state" in
-              Complete*)
-                echo "Migrations completed successfully"
-                break
-                ;;
+            # Swarm often leaves a fresh task in Preparing while an older one with the
+            # same digest already completed (slow pull / restart-policy / queued deploys).
+            # Treat recent Complete+matching digest as success; only fail on a newest
+            # Failed/Rejected when no matching Complete exists yet.
+            rows="$(docker service ps --no-trunc --format '{{.CurrentState}}|{{.Image}}|{{.Error}}' "$migration_service" | head -n 20)"
+            newest_state="$(printf '%s\n' "$rows" | head -n 1 | cut -d'|' -f1)"
+            echo "migrate: $newest_state"
+
+            if printf '%s\n' "$rows" | grep -E '^Complete\|' | grep -Fq "$image_digest"; then
+              echo "Migrations completed successfully (Complete task with $image_digest)"
+              break
+            fi
+
+            case "$newest_state" in
               Failed*|Rejected*)
-                echo "Migration task failed: $task_state" >&2
+                echo "Migration task failed: $newest_state" >&2
+                printf '%s\n' "$rows" >&2 || true
                 docker service logs --tail 120 "$migration_service" >&2 || true
                 exit 1
                 ;;
             esac
 
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "Timed out waiting for migration task: $task_state" >&2
+              echo "Timed out waiting for migration task: $newest_state" >&2
+              printf '%s\n' "$rows" >&2 || true
+              docker service ps --no-trunc "$migration_service" >&2 || true
               docker service logs --tail 120 "$migration_service" >&2 || true
               exit 1
             fi
