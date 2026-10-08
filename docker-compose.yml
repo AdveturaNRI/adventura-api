@@ -99,6 +99,10 @@ services:
       VK_API_VERSION: ${VK_API_VERSION:-5.199}
       YANDEX_CLIENT_ID: ${YANDEX_CLIENT_ID:-}
       YANDEX_CLIENT_SECRET: ${YANDEX_CLIENT_SECRET:-}
+      # LiveKit on host (`docker run` / local). Browser still uses localhost:7880.
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://localhost:7880}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret}
     depends_on:
       postgres:
         condition: service_healthy

@@ -8,23 +8,23 @@ datasource db {
 }
 
 model User {
-  id                          String                     @id @default(cuid())
-  email                       String                     @unique
-  nickname                    String                     @unique
+  id                          String                       @id @default(cuid())
+  email                       String                       @unique
+  nickname                    String                       @unique
   passwordHash                String
-  isGuest                     Boolean                    @default(false)
+  isGuest                     Boolean                      @default(false)
   emailVerifiedAt             DateTime?
   availability                String?
   age                         Int?
   location                    String?
   cityId                      String?
-  timezone                    String                     @default("Europe/Moscow")
-  playsOnline                 Boolean                    @default(false)
-  isPublic                    Boolean                    @default(true)
-  systems                     String[]                   @default([])
-  readyToLearnNew             Boolean                    @default(false)
-  openToAnySystem             Boolean                    @default(false)
-  prefersFreeOnly             Boolean                    @default(false)
+  timezone                    String                       @default("Europe/Moscow")
+  playsOnline                 Boolean                      @default(false)
+  isPublic                    Boolean                      @default(true)
+  systems                     String[]                     @default([])
+  readyToLearnNew             Boolean                      @default(false)
+  openToAnySystem             Boolean                      @default(false)
+  prefersFreeOnly             Boolean                      @default(false)
   gameCostFormat              String?
   sessionPriceKind            String?
   sessionPriceMin             Int?
@@ -35,36 +35,39 @@ model User {
   playerBudgetMax             Int?
   about                       String?
   description                 String?
-  roles                       String[]                   @default([])
-  questionnaireStep           Int                        @default(0)
-  notificationSoundsEnabled   Boolean                    @default(true)
+  roles                       String[]                     @default([])
+  questionnaireStep           Int                          @default(0)
+  notificationSoundsEnabled   Boolean                      @default(true)
   notificationSoundPresetId   String?
-  useCustomNotificationSound  Boolean                    @default(false)
+  useCustomNotificationSound  Boolean                      @default(false)
   lastSeenAt                  DateTime?
   equippedAvatarFrameId       String?
   equippedQuestionnaireAuraId String?
   visibleBadgeTypes           Json?
-  createdAt                   DateTime                   @default(now())
-  updatedAt                   DateTime                   @updatedAt
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
   refreshTokens               RefreshToken[]
   emailTokens                 EmailToken[]
   statuses                    UserStatus[]
   experiences                 UserExperience[]
-  city                        City?                      @relation(fields: [cityId], references: [id], onDelete: SetNull)
-  notificationSoundPreset     NotificationSoundPreset?   @relation("UserNotificationSoundPreset", fields: [notificationSoundPresetId], references: [id], onDelete: SetNull)
+  city                        City?                        @relation(fields: [cityId], references: [id], onDelete: SetNull)
+  notificationSoundPreset     NotificationSoundPreset?     @relation("UserNotificationSoundPreset", fields: [notificationSoundPresetId], references: [id], onDelete: SetNull)
   userCities                  UserCity[]
   gameSystems                 UserGameSystem[]
-  wandererReactionsGiven      WandererReaction[]         @relation("WandererReactionsGiven")
-  wandererReactionsReceived   WandererReaction[]         @relation("WandererReactionsReceived")
-  conversationsAsLow          Conversation[]             @relation("ConversationUserLow")
-  conversationsAsHigh         Conversation[]             @relation("ConversationUserHigh")
+  wandererReactionsGiven      WandererReaction[]           @relation("WandererReactionsGiven")
+  wandererReactionsReceived   WandererReaction[]           @relation("WandererReactionsReceived")
+  conversationsAsLow          Conversation[]               @relation("ConversationUserLow")
+  conversationsAsHigh         Conversation[]               @relation("ConversationUserHigh")
   conversationReads           ConversationRead[]
   conversationParticipants    ConversationParticipant[]
   messagesSent                Message[]
-  notificationsReceived       Notification[]             @relation("NotificationsReceived")
-  notificationsActed          Notification[]             @relation("NotificationsActed")
-  blocksGiven                 UserBlock[]                @relation("BlocksGiven")
-  blocksReceived              UserBlock[]                @relation("BlocksReceived")
+  messageReactions            MessageReaction[]
+  reactionReceipts            MessageReactionReceipt[]
+  chatReactionPreferences     UserChatReactionPreference[]
+  notificationsReceived       Notification[]               @relation("NotificationsReceived")
+  notificationsActed          Notification[]               @relation("NotificationsActed")
+  blocksGiven                 UserBlock[]                  @relation("BlocksGiven")
+  blocksReceived              UserBlock[]                  @relation("BlocksReceived")
   gamesOwned                  Game[]
   clubsOwned                  Club[]
   clubMemberships             ClubMember[]
@@ -576,29 +579,72 @@ enum MessageKind {
 }
 
 model Message {
-  id                     String       @id @default(cuid())
+  id                     String            @id @default(cuid())
   conversationId         String
   senderId               String
   body                   String?
   attachmentName         String?
-  kind                   MessageKind  @default(USER)
+  kind                   MessageKind       @default(USER)
   replyToId              String?
   replyToBody            String?
   replyToSenderNickname  String?
-  replyToHasMedia        Boolean      @default(false)
+  replyToHasMedia        Boolean           @default(false)
   forwardedFromUserId    String?
   forwardedFromNickname  String?
   forwardedFromMessageId String?
-  createdAt              DateTime     @default(now())
-  conversation           Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender                 User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
-  replyTo                Message?     @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
-  replies                Message[]    @relation("MessageReplies")
+  createdAt              DateTime          @default(now())
+  conversation           Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender                 User              @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  replyTo                Message?          @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies                Message[]         @relation("MessageReplies")
+  reactions              MessageReaction[]
 
   @@index([conversationId, createdAt])
   @@index([senderId])
   @@index([replyToId])
   @@map("messages")
+}
+
+model MessageReaction {
+  id        String                   @id @default(cuid())
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime                 @default(now())
+  updatedAt DateTime                 @updatedAt
+  message   Message                  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  receipts  MessageReactionReceipt[]
+
+  @@unique([messageId, userId])
+  @@index([messageId, createdAt])
+  @@map("message_reactions")
+}
+
+model MessageReactionReceipt {
+  id          String          @id @default(cuid())
+  reactionId  String
+  recipientId String
+  createdAt   DateTime        @default(now())
+  readAt      DateTime?
+  reaction    MessageReaction @relation(fields: [reactionId], references: [id], onDelete: Cascade)
+  recipient   User            @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@unique([reactionId, recipientId])
+  @@index([recipientId, readAt, createdAt])
+  @@map("message_reaction_receipts")
+}
+
+model UserChatReactionPreference {
+  userId    String
+  emoji     String
+  useCount  Int      @default(0)
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, emoji])
+  @@index([userId, useCount])
+  @@map("user_chat_reaction_preferences")
 }
 
 enum NotificationType {
@@ -934,13 +980,13 @@ model MarketingExpense {
  * campaign configuration changes.
  */
 model MarketingAttributionTouch {
-  id          String   @id @default(cuid())
+  id             String  @id @default(cuid())
   idempotencyKey String? @unique
-  anonymousId String   @db.Uuid
-  userId      String?
-  campaignId  String?
-  variantId   String?
-  landingId   String?
+  anonymousId    String  @db.Uuid
+  userId         String?
+  campaignId     String?
+  variantId      String?
+  landingId      String?
 
   utmSource   String?
   utmMedium   String?
@@ -993,10 +1039,10 @@ model MarketingConversion {
   createdAt        DateTime                @default(now())
   props            Json                    @default("{}")
 
-  user     User?                     @relation(fields: [userId], references: [id], onDelete: SetNull)
-  campaign MarketingCampaign?        @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  variant  MarketingCampaignVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
-  landing  MarketingLanding?         @relation(fields: [landingId], references: [id], onDelete: SetNull)
+  user     User?                      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  campaign MarketingCampaign?         @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  variant  MarketingCampaignVariant?  @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  landing  MarketingLanding?          @relation(fields: [landingId], references: [id], onDelete: SetNull)
   touch    MarketingAttributionTouch? @relation(fields: [touchId], references: [id], onDelete: SetNull)
 
   @@index([campaignId, type, occurredAt])
