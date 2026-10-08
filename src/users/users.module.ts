@@ -7,6 +7,7 @@ import { MediaModule } from '../media/media.module';
 import { MarketingConversionsModule } from '../marketing/conversions/marketing-conversions.module';
 import { NotificationSoundsModule } from '../notification-sounds/notification-sounds.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 import { RewardsModule } from '../rewards/rewards.module';
 import { UsersController } from './users.controller';
 import { UserGameSystemsService } from './user-game-systems.service';
@@ -21,6 +22,7 @@ import { UsersService } from './users.service';
     NotificationSoundsModule,
     MarketingConversionsModule,
     forwardRef(() => ChatsModule),
+    RealtimeModule,
     RewardsModule,
   ],
   controllers: [UsersController],

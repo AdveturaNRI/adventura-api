@@ -24,6 +24,7 @@ import { MediaService } from '../media/media.service';
 import { MarketingConversionsService } from '../marketing/conversions/marketing-conversions.service';
 import { NotificationSoundsService } from '../notification-sounds/notification-sounds.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RealtimeEmitter } from '../realtime/realtime.emitter';
 import { RewardsService } from '../rewards/rewards.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -251,6 +252,7 @@ export class UsersService {
     private readonly marketingConversions: MarketingConversionsService,
     @Inject(forwardRef(() => ChatsService))
     private readonly chatsService: ChatsService,
+    private readonly realtime: RealtimeEmitter,
     private readonly rewardsService: RewardsService,
   ) {}
 
@@ -1505,6 +1507,8 @@ export class UsersService {
       badges: perks.visibleBadges,
       avatarFrameId: perks.avatarFrameId,
       questionnaireAuraId: perks.questionnaireAuraId,
+      online: this.realtime.isPresent(user.id, user.lastSeenAt),
+      lastSeenAt: user.lastSeenAt?.toISOString() ?? null,
     };
   }
 }
