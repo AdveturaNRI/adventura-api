@@ -24,7 +24,8 @@
     "db:studio": "prisma studio",
     "db:import-cities": "ts-node scripts/import-cities-geonames.ts",
     "rewards:grant-alpha": "ts-node -r tsconfig-paths/register scripts/grant-alpha-tester.ts",
-    "media:cleanup-tiny-profile-cards": "ts-node -r tsconfig-paths/register scripts/cleanup-tiny-oauth-profile-cards.ts"
+    "media:cleanup-tiny-profile-cards": "ts-node -r tsconfig-paths/register scripts/cleanup-tiny-oauth-profile-cards.ts",
+    "announcements:seed": "ts-node -r tsconfig-paths/register scripts/seed-site-announcements.ts"
   },
   "dependencies": {
     "@adminjs/express": "^6.1.1",

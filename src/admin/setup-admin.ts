@@ -11,6 +11,7 @@ import {
   DAILY_METRICS,
   ONLINE_WINDOW_MS,
 } from '../analytics/analytics.constants';
+import { AnnouncementsService } from '../announcements/announcements.service';
 import { AppSettingsService } from '../app-settings/app-settings.service';
 import { loadEsmModule } from '../common/load-esm-module';
 import { MarketingLandingsService } from '../marketing/landings/marketing-landings.service';
@@ -1062,6 +1063,10 @@ export async function setupAdmin(
     'BroadcastsAdmin',
     resolveAdminComponent('broadcasts-admin'),
   );
+  const siteAnnouncementsComponent = componentLoader.add(
+    'SiteAnnouncementsAdmin',
+    resolveAdminComponent('site-announcements-admin'),
+  );
   const pushSettingsComponent = componentLoader.add(
     'PushSettings',
     resolveAdminComponent('push-settings'),
@@ -1091,6 +1096,7 @@ export async function setupAdmin(
   const appSettings = app.get(AppSettingsService);
   const notificationSounds = app.get(NotificationSoundsService);
   const broadcasts = app.get(BroadcastService);
+  const siteAnnouncements = app.get(AnnouncementsService);
   const pushSubscriptions = app.get(PushSubscriptionsService);
   const marketingLandings = app.get(MarketingLandingsService);
   const marketingCampaigns = app.get(MarketingCampaignsService);
@@ -1380,6 +1386,175 @@ export async function setupAdmin(
           }
 
           return { campaigns: await broadcasts.listCampaigns() };
+        },
+      },
+      siteAnnouncements: {
+        icon: 'Announcement',
+        component: siteAnnouncementsComponent,
+        handler: async (request: {
+          method?: string;
+          payload?: Record<string, unknown>;
+        }) => {
+          const list = () => siteAnnouncements.listAdmin();
+          const method = (request.method ?? 'get').toLowerCase();
+          if (method !== 'post') {
+            return { items: await list() };
+          }
+
+          const decodeFile = (data: Record<string, unknown>) => {
+            const raw = String(data.fileBase64 ?? '').trim();
+            if (!raw) return undefined;
+            const base64 = raw.includes(',') ? raw.split(',').pop() ?? '' : raw;
+            if (!base64) return undefined;
+            return {
+              buffer: Buffer.from(base64, 'base64'),
+              mimetype: String(data.fileMime ?? 'image/jpeg'),
+              originalname: String(data.fileName ?? 'image.jpg'),
+            };
+          };
+
+          const parseTheme = (value: unknown) => {
+            if (value === undefined || value === null || value === '') {
+              return undefined;
+            }
+            if (typeof value === 'object') return value;
+            try {
+              return JSON.parse(String(value));
+            } catch {
+              throw new Error('Некорректные настройки оформления');
+            }
+          };
+
+          try {
+            const payload = request.payload ?? {};
+            const action = String(payload.action ?? '');
+            const id = String(payload.id ?? '');
+            const writeInput = {
+              internalName:
+                payload.internalName === undefined
+                  ? undefined
+                  : String(payload.internalName),
+              title:
+                payload.title === undefined ? undefined : String(payload.title),
+              body:
+                payload.body === undefined ? undefined : String(payload.body),
+              actionLabel:
+                payload.actionLabel === undefined
+                  ? undefined
+                  : String(payload.actionLabel),
+              actionUrl:
+                payload.actionUrl === undefined
+                  ? undefined
+                  : String(payload.actionUrl),
+              publishedAt:
+                payload.publishedAt === undefined
+                  ? undefined
+                  : String(payload.publishedAt || '') || null,
+              theme: parseTheme(payload.theme),
+            };
+
+            if (action === 'create') {
+              const item = await siteAnnouncements.createDraft(writeInput);
+              return {
+                items: await list(),
+                item,
+                notice: { message: 'Черновик создан', type: 'success' },
+              };
+            }
+
+            if (action === 'save') {
+              const item = await siteAnnouncements.update(id, writeInput);
+              return {
+                items: await list(),
+                item,
+                notice: { message: 'Сохранено', type: 'success' },
+              };
+            }
+
+            if (action === 'publish') {
+              await siteAnnouncements.update(id, writeInput);
+              const item = await siteAnnouncements.publish(id);
+              return {
+                items: await list(),
+                item,
+                notice: { message: 'Опубликовано', type: 'success' },
+              };
+            }
+
+            if (action === 'republish') {
+              await siteAnnouncements.update(id, writeInput);
+              const item = await siteAnnouncements.publish(id, {
+                republish: true,
+              });
+              return {
+                items: await list(),
+                item,
+                notice: {
+                  message: 'Опубликовано повторно (новая версия)',
+                  type: 'success',
+                },
+              };
+            }
+
+            if (action === 'unpublish') {
+              const item = await siteAnnouncements.unpublish(id);
+              return {
+                items: await list(),
+                item,
+                notice: { message: 'Снято с публикации', type: 'success' },
+              };
+            }
+
+            if (action === 'archive') {
+              const item = await siteAnnouncements.archive(id);
+              return {
+                items: await list(),
+                item,
+                notice: { message: 'В архиве', type: 'success' },
+              };
+            }
+
+            if (action === 'delete') {
+              await siteAnnouncements.remove(id);
+              return {
+                items: await list(),
+                notice: { message: 'Удалено', type: 'success' },
+              };
+            }
+
+            if (action === 'uploadImage') {
+              const file = decodeFile(payload);
+              if (!file) throw new Error('Файл не передан');
+              const item = await siteAnnouncements.uploadImage(id, file);
+              return {
+                items: await list(),
+                item,
+                notice: { message: 'Картинка загружена', type: 'success' },
+              };
+            }
+
+            if (action === 'removeImage') {
+              const item = await siteAnnouncements.removeImage(id);
+              return {
+                items: await list(),
+                item,
+                notice: { message: 'Картинка удалена', type: 'success' },
+              };
+            }
+
+            throw new Error('Неизвестное действие');
+          } catch (error) {
+            return {
+              items: await list(),
+              notice: {
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : 'Не удалось выполнить действие',
+                type: 'error',
+              },
+            };
+          }
         },
       },
       pushSettings: {
@@ -2215,10 +2390,12 @@ export async function setupAdmin(
             'name',
             'href',
             'mark',
+            'tagline',
             'accent',
             'logoUrl',
             'sortOrder',
             'isActive',
+            'showInSidebar',
           ],
           properties: {
             href: {
@@ -2227,6 +2404,10 @@ export async function setupAdmin(
             mark: {
               isRequired: false,
               description: 'Две буквы на плашке, если нет logoUrl',
+            },
+            tagline: {
+              isRequired: false,
+              description: 'Короткая фраза под названием в карточке бокового меню',
             },
             accent: {
               isRequired: false,
@@ -2242,6 +2423,11 @@ export async function setupAdmin(
             },
             isActive: {
               isRequired: false,
+              description: 'Показывать в бегущей строке на экранах',
+            },
+            showInSidebar: {
+              isRequired: false,
+              description: 'Карточка в левом меню приложения',
             },
           },
           actions: {
@@ -2670,13 +2856,16 @@ export async function setupAdmin(
   const requiredComponentIds = [
     'AnalyticsDashboard',
     'MetrikaSettings',
+    'VkAdsPixelSettings',
     'NotificationSoundsAdmin',
     'BroadcastsAdmin',
+    'SiteAnnouncementsAdmin',
     'PushSettings',
     'MarketingLandingEditor',
     'MarketingCampaignsAdmin',
     'MarketingAnalyticsAdmin',
     'GrantRewards',
+    'PartnerLogoUpload',
   ] as const;
 
   // Drop stale entry/bundle from a previous component set (e.g. only GrantRewards).
@@ -2726,12 +2915,24 @@ export async function setupAdmin(
     }
   }
 
+  const rollupBytes = Buffer.byteLength(readFileSync(rollupBundlePath));
+  if (rollupBytes < 1024) {
+    throw new Error(
+      `AdminJS rollup bundle is empty/too small (${rollupBytes} bytes) at ${rollupBundlePath}`,
+    );
+  }
   copyFileSync(rollupBundlePath, stableBundlePath);
+  const stableBytes = Buffer.byteLength(readFileSync(stableBundlePath));
+  if (stableBytes < 1024) {
+    throw new Error(
+      `AdminJS stable bundle copy failed (${stableBytes} bytes) at ${stableBundlePath}`,
+    );
+  }
   // Prevent @adminjs/express initializeAdmin() from rebuilding/truncating the bundle.
   process.env.ADMIN_JS_SKIP_BUNDLE = 'true';
   // eslint-disable-next-line no-console
   console.log(
-    `AdminJS: custom components ready (${stableBundlePath}, ${Buffer.byteLength(readFileSync(stableBundlePath))} bytes)`,
+    `AdminJS: custom components ready (${stableBundlePath}, ${stableBytes} bytes)`,
   );
 
   const router = AdminJSExpress.buildAuthenticatedRouter(
@@ -2769,11 +2970,21 @@ export async function setupAdmin(
   expressApp.get(
     `${admin.options.rootPath}/frontend/assets/components.bundle.js`,
     (_req: Request, res: Response) => {
-      const filePath = existsSync(stableBundlePath)
-        ? stableBundlePath
-        : rollupBundlePath;
+      const stableOk =
+        existsSync(stableBundlePath) &&
+        Buffer.byteLength(readFileSync(stableBundlePath)) > 1024;
+      const filePath = stableOk ? stableBundlePath : rollupBundlePath;
       try {
         const body = readFileSync(filePath);
+        if (body.byteLength < 1024) {
+          res
+            .status(500)
+            .type('text/plain')
+            .send(
+              `AdminJS components bundle empty at ${filePath} (${body.byteLength} bytes)`,
+            );
+          return;
+        }
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
         res.setHeader('Pragma', 'no-cache');
         res.type('application/javascript; charset=utf-8');

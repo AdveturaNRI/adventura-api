@@ -84,6 +84,8 @@ model User {
   oauthAccounts               OAuthAccount[]
   musicTracks                 MusicTrack[]
   musicPlaylists              MusicPlaylist[]
+  siteAnnouncementDismissals  SiteAnnouncementDismissal[]
+  siteAnnouncementLikes       SiteAnnouncementLike[]
 
   @@index([notificationSoundPresetId])
 }
@@ -1057,14 +1059,19 @@ model Partner {
   href      String
   /// Короткий текст на плашке, если нет logoUrl
   mark      String   @default("")
+  /// Подпись под названием в карточке сайдбара
+  tagline   String   @default("")
   accent    String   @default("#157AFE")
   logoUrl   String?
   sortOrder Int      @default(0)
   isActive  Boolean  @default(true)
+  /// Карточка в левом меню (сайдбар)
+  showInSidebar Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([isActive, sortOrder])
+  @@index([isActive, showInSidebar, sortOrder])
   @@map("partners")
 }
 
@@ -1119,4 +1126,65 @@ model MusicPlaylistItem {
   @@index([trackId])
   @@index([playlistId, sortOrder])
   @@map("music_playlist_items")
+}
+
+enum SiteAnnouncementStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// Global modal announcements managed from AdminJS.
+model SiteAnnouncement {
+  id                 String                 @id @default(cuid())
+  /// Admin-only label in the list.
+  internalName       String
+  title              String
+  /// Plain text or limited HTML (sanitized on write/read).
+  body               String                 @default("")
+  actionLabel        String?
+  actionUrl          String?
+  status             SiteAnnouncementStatus @default(DRAFT)
+  publishedAt        DateTime?
+  /// Bumps on publish / republish so dismissals stay scoped to a version.
+  publicationVersion Int                    @default(0)
+  views              Int                    @default(0)
+  likesCount         Int                    @default(0)
+  /// Visual settings JSON (colors, layout, etc.).
+  theme              Json                   @default("{}")
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+  dismissals         SiteAnnouncementDismissal[]
+  likes              SiteAnnouncementLike[]
+
+  @@index([status, publishedAt])
+  @@index([status, publicationVersion])
+  @@map("site_announcements")
+}
+
+model SiteAnnouncementDismissal {
+  id                   String           @id @default(cuid())
+  userId               String
+  announcementId       String
+  publicationVersion   Int
+  dismissedAt          DateTime         @default(now())
+  user                 User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  announcement         SiteAnnouncement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, announcementId, publicationVersion])
+  @@index([userId, dismissedAt])
+  @@index([announcementId])
+  @@map("site_announcement_dismissals")
+}
+
+model SiteAnnouncementLike {
+  announcementId String
+  userId         String
+  createdAt      DateTime         @default(now())
+  announcement   SiteAnnouncement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([announcementId, userId])
+  @@index([userId])
+  @@map("site_announcement_likes")
 }

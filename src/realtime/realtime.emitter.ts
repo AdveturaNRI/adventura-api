@@ -3,6 +3,7 @@ import { Server } from 'socket.io';
 
 import {
   REALTIME_EVENTS,
+  type AnnouncementPublishedPayload,
   type CallInvitePayload,
   type CallSignalPayload,
   type ConversationDeletedPayload,
@@ -109,6 +110,11 @@ export class RealtimeEmitter {
 
   emitNotificationNew(userId: string, payload: unknown) {
     this.emitToUser(userId, REALTIME_EVENTS.NOTIFICATION_NEW, payload);
+  }
+
+  /** Broadcast to all connected sockets — clients filter by dismissals via HTTP. */
+  emitAnnouncementPublished(payload: AnnouncementPublishedPayload) {
+    this.server?.emit(REALTIME_EVENTS.ANNOUNCEMENT_PUBLISHED, payload);
   }
 
   emitUnreadSync(userId: string, payload: UnreadSyncPayload) {
