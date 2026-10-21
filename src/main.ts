@@ -12,6 +12,9 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const configService = app.get(ConfigService);
 
+  // Needed for secure admin session cookies behind ingress / TLS terminator.
+  app.set('trust proxy', 1);
+
   app.setGlobalPrefix('api');
 
   // Reflect request Origin so any browser/client works with credentials.
