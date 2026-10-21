@@ -4,7 +4,9 @@ import { join, resolve } from 'path';
 import type { INestApplication } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
+import ConnectPgSimple from 'connect-pg-simple';
 import type { Request, Response } from 'express';
+import session from 'express-session';
 
 import {
   ANALYTICS_EVENTS,
@@ -2935,6 +2937,24 @@ export async function setupAdmin(
     `AdminJS: custom components ready (${stableBundlePath}, ${stableBytes} bytes)`,
   );
 
+  // Shared session store across replicated nodes. Default MemoryStore keeps the
+  // login cookie valid only on the node that handled POST /login — next request
+  // often hits another node and bounces back to the login page with no error.
+  const PgSession = ConnectPgSimple(session);
+  const databaseUrl = configService.getOrThrow<string>('DATABASE_URL');
+  // connect-pg-simple talks plain `pg`; strip Prisma `?schema=` query noise.
+  const sessionConString = databaseUrl.replace(
+    /([?&])schema=[^&]*&?/,
+    (_, sep: string) => (sep === '?' ? '?' : ''),
+  ).replace(/\?$/, '');
+  const isProd = configService.get<string>('NODE_ENV') === 'production';
+  const sessionStore = new PgSession({
+    conString: sessionConString,
+    tableName: 'admin_sessions',
+    createTableIfMissing: true,
+    pruneSessionInterval: 60 * 15,
+  });
+
   const router = AdminJSExpress.buildAuthenticatedRouter(
     admin,
     {
@@ -2958,9 +2978,18 @@ export async function setupAdmin(
     },
     null,
     {
+      store: sessionStore,
       resave: false,
       saveUninitialized: false,
       secret: configService.getOrThrow<string>('ADMIN_SESSION_SECRET'),
+      cookie: {
+        httpOnly: true,
+        sameSite: 'lax',
+        // Behind TLS-terminating LB / ingress; requires trust proxy (see main.ts).
+        secure: isProd,
+        maxAge: 1000 * 60 * 60 * 24 * 7,
+      },
+      name: 'adventura_admin',
     },
   );
 
