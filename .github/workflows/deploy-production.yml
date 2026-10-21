@@ -128,7 +128,8 @@ jobs:
             newest_state="$(printf '%s\n' "$rows" | head -n 1 | cut -d'|' -f1)"
             echo "migrate: $newest_state"
 
-            if printf '%s\n' "$rows" | grep -E '^Complete\|' | grep -Fq "$image_digest"; then
+            # CurrentState is "Complete 9 minutes ago", not bare "Complete".
+            if printf '%s\n' "$rows" | grep -E '^Complete ' | grep -Fq "$image_digest"; then
               echo "Migrations completed successfully (Complete task with $image_digest)"
               break
             fi
