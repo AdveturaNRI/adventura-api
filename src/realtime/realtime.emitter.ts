@@ -118,6 +118,21 @@ export class RealtimeEmitter implements OnModuleDestroy {
     return this.onlineSockets.size;
   }
 
+  /** Cluster-wide WS online users (Redis keys) or local Map size. */
+  async countOnlineUsers(): Promise<number> {
+    if (!this.redis) {
+      return this.onlineSockets.size;
+    }
+    let count = 0;
+    for await (const _key of this.redis.scanIterator({
+      MATCH: 'rt:online:*',
+      COUNT: 200,
+    })) {
+      count += 1;
+    }
+    return count;
+  }
+
   emitToUser(userId: string, event: string, payload: unknown) {
     this.server?.to(this.userRoom(userId)).emit(event, payload);
   }

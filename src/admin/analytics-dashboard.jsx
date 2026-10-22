@@ -371,28 +371,45 @@ const AnalyticsDashboard = () => {
   const [error, setError] = useState(null);
   const [range, setRange] = useState('week');
   const [enabled, setEnabled] = useState({});
+  const [liveRefreshing, setLiveRefreshing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    let seeded = false;
+
+    const load = async ({ soft = false } = {}) => {
+      if (soft) setLiveRefreshing(true);
       try {
         const response = await api.getDashboard();
         const payload = response.data ?? response;
         if (cancelled) return;
         setData(payload);
-        const initial = {};
-        for (const meta of payload.seriesMeta ?? []) {
-          initial[meta.id] = Boolean(meta.defaultOn);
+        setError(null);
+        if (!seeded) {
+          const initial = {};
+          for (const meta of payload.seriesMeta ?? []) {
+            initial[meta.id] = Boolean(meta.defaultOn);
+          }
+          setEnabled(initial);
+          seeded = true;
         }
-        setEnabled(initial);
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && !soft) {
           setError(err instanceof Error ? err.message : 'Не удалось загрузить сводку');
         }
+      } finally {
+        if (!cancelled && soft) setLiveRefreshing(false);
       }
-    })();
+    };
+
+    void load();
+    const timer = setInterval(() => {
+      void load({ soft: true });
+    }, 30_000);
+
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
   }, []);
 
@@ -457,18 +474,25 @@ const AnalyticsDashboard = () => {
   const groups = ['platform', 'views', 'transitions', 'product', 'funnel', 'clubs', 'metrics'];
 
   const kpis = data.kpis ?? {};
+  const live = data.live ?? {};
   const onlineHint = kpis.onlineWindowMinutes
     ? `lastSeen ≤ ${kpis.onlineWindowMinutes} мин`
     : 'lastSeen недавно';
+  const liveHint = live.refreshedAt
+    ? `обновл. ${new Date(live.refreshedAt).toLocaleTimeString('ru-RU')}${
+        liveRefreshing ? ' · …' : ''
+      }`
+    : 'live';
 
   return (
     <Box variant="grey20" padding="xxl">
       <Header.H2 marginBottom="lg">Аналитика Adventura</Header.H2>
       <Text color="grey60" marginBottom="xl">
-        Карточки сверху — актуальное состояние БД сейчас. Числа над графиком за
-        период: для снимков (пользователи, анкеты, DAU/WAU/MAU, %) берётся
-        последнее значение; для событий — сумма. Просмотры — карточка видна ≥3с.
-        Переходы — открытие деталки.
+        Карточки сверху — актуальное состояние БД сейчас. Блок «Сейчас» —
+        LiveKit + чаты, автообновление каждые 30с. Числа над графиком за период:
+        для снимков (пользователи, анкеты, DAU/WAU/MAU, %) берётся последнее
+        значение; для событий — сумма. Просмотры — карточка видна ≥3с. Переходы —
+        открытие деталки.
       </Text>
 
       <Box display="flex" flexWrap="wrap" style={{ gap: 16 }} marginBottom="xl">
@@ -485,10 +509,103 @@ const AnalyticsDashboard = () => {
           color="#8b5cf6"
         />
         <MetricCard
-          label="Онлайн"
+          label="Онлайн (lastSeen)"
           value={kpis.usersOnline}
           hint={onlineHint}
           color="#22c55e"
+        />
+      </Box>
+
+      <Header.H3 marginBottom="default">Сейчас · голос и чаты</Header.H3>
+      <Text color="grey60" marginBottom="lg" fontSize={13}>
+        Голосовые комнаты — активные LiveKit `chat:*`. WS онлайн — сокеты
+        realtime{live.voiceError ? ` · LiveKit: ${live.voiceError}` : ''}
+        {!live.voiceConfigured ? ' · LiveKit не настроен' : ''}.
+      </Text>
+      <Box display="flex" flexWrap="wrap" style={{ gap: 16 }} marginBottom="xl">
+        <MetricCard
+          label="Голосовые комнаты"
+          value={live.voiceConfigured ? live.voiceRooms : '—'}
+          hint={liveHint}
+          color="#f59e0b"
+        />
+        <MetricCard
+          label="В голосе"
+          value={live.voiceConfigured ? live.voiceParticipants : '—'}
+          hint="участники LiveKit"
+          color="#ef4444"
+        />
+        <MetricCard
+          label="WS онлайн"
+          value={live.wsOnline}
+          hint="активные сокеты /realtime"
+          color="#14b8a6"
+        />
+        <MetricCard
+          label="Сообщения / час"
+          value={live.messagesLastHour}
+          hint="kind=USER"
+          color="#6366f1"
+        />
+        <MetricCard
+          label="Сообщения / 24ч"
+          value={live.messagesLast24h}
+          hint="kind=USER"
+          color="#4f46e5"
+        />
+        <MetricCard
+          label="Активные чаты / 24ч"
+          value={live.activeConversations24h}
+          hint="чаты с ≥1 сообщением"
+          color="#0d9488"
+        />
+        <MetricCard
+          label="Горячие чаты"
+          value={live.hotConversations15m}
+          hint="lastMessage ≤ 15 мин"
+          color="#db2777"
+        />
+        <MetricCard
+          label="Чатов всего"
+          value={live.conversationsTotal}
+          hint="все conversation"
+          color="#64748b"
+        />
+        <MetricCard
+          label="Пропущенные звонки / 24ч"
+          value={live.missedCalls24h}
+          hint="системные сообщения"
+          color="#a855f7"
+        />
+        <MetricCard
+          label="Голосовые сообщ. / час"
+          value={live.voiceMessagesLastHour}
+          hint="Media с durationSec"
+          color="#f97316"
+        />
+        <MetricCard
+          label="Голосовые сообщ. / 24ч"
+          value={live.voiceMessagesLast24h}
+          hint="voice notes в чатах"
+          color="#ea580c"
+        />
+        <MetricCard
+          label="Реакции / час"
+          value={live.reactionsLastHour}
+          hint="постановки emoji"
+          color="#ec4899"
+        />
+        <MetricCard
+          label="Реакции / 24ч"
+          value={live.reactionsLast24h}
+          hint="постановки emoji"
+          color="#db2777"
+        />
+        <MetricCard
+          label="Реагировали / 24ч"
+          value={live.reactingUsers24h}
+          hint="уникальные пользователи"
+          color="#be185d"
         />
       </Box>
 

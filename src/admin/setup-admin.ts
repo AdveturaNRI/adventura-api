@@ -3,10 +3,11 @@ import { join, resolve } from 'path';
 
 import type { INestApplication } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
+import { MessageKind, Prisma } from '@prisma/client';
 import ConnectPgSimple from 'connect-pg-simple';
 import type { Request, Response } from 'express';
 import session from 'express-session';
+import { RoomServiceClient } from 'livekit-server-sdk';
 
 import {
   ANALYTICS_EVENTS,
@@ -21,6 +22,7 @@ import { BroadcastService } from '../notifications/broadcast.service';
 import { NotificationSoundsService } from '../notification-sounds/notification-sounds.service';
 import { PushSubscriptionsService } from '../push-subscriptions/push-subscriptions.service';
 import type { PrismaService } from '../prisma/prisma.service';
+import { RealtimeEmitter } from '../realtime/realtime.emitter';
 import { RewardsService } from '../rewards/rewards.service';
 import {
   buildQuestionnaireCompletionInput,
@@ -905,13 +907,76 @@ async function countActiveProfilesNow(prisma: PrismaService): Promise<number> {
   ).length;
 }
 
-async function buildAnalyticsDashboardData(prisma: PrismaService) {
+function livekitHttpHost(rawUrl: string): string | null {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'ws:') parsed.protocol = 'http:';
+    if (parsed.protocol === 'wss:') parsed.protocol = 'https:';
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchLiveVoiceStats(config: ConfigService): Promise<{
+  configured: boolean;
+  rooms: number;
+  participants: number;
+  error: string | null;
+}> {
+  const url = config.get<string>('LIVEKIT_URL')?.trim();
+  const apiKey = config.get<string>('LIVEKIT_API_KEY')?.trim();
+  const apiSecret = config.get<string>('LIVEKIT_API_SECRET')?.trim();
+  const host = url ? livekitHttpHost(url) : null;
+
+  if (!host || !apiKey || !apiSecret) {
+    return {
+      configured: false,
+      rooms: 0,
+      participants: 0,
+      error: null,
+    };
+  }
+
+  try {
+    const client = new RoomServiceClient(host, apiKey, apiSecret);
+    const rooms = await client.listRooms();
+    const chatRooms = rooms.filter((room) => room.name?.startsWith('chat:'));
+    const participants = chatRooms.reduce(
+      (sum, room) => sum + (room.numParticipants ?? 0),
+      0,
+    );
+    return {
+      configured: true,
+      rooms: chatRooms.length,
+      participants,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      rooms: 0,
+      participants: 0,
+      error: error instanceof Error ? error.message : 'LiveKit unavailable',
+    };
+  }
+}
+
+async function buildAnalyticsDashboardData(
+  prisma: PrismaService,
+  config: ConfigService,
+  realtime: RealtimeEmitter,
+) {
   const now = new Date();
+  const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
   const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const yearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
   const onlineSince = new Date(now.getTime() - ONLINE_WINDOW_MS);
+  const chatHotSince = new Date(now.getTime() - 15 * 60 * 1000);
 
   const earliest = await prisma.analyticsEvent.findFirst({
     orderBy: { occurredAt: 'asc' },
@@ -921,7 +986,25 @@ async function buildAnalyticsDashboardData(prisma: PrismaService) {
     ? utcTruncate(earliest.occurredAt, 'month')
     : utcTruncate(yearAgo, 'month');
 
-  const [ranges, usersTotal, profilesActive, usersOnline] = await Promise.all([
+  const [
+    ranges,
+    usersTotal,
+    profilesActive,
+    usersOnline,
+    voice,
+    wsOnline,
+    messagesLastHour,
+    messagesLast24h,
+    activeConversations24h,
+    hotConversations,
+    conversationsTotal,
+    missedCalls24h,
+    voiceMessagesLastHour,
+    voiceMessagesLast24h,
+    reactionsLastHour,
+    reactionsLast24h,
+    reactingUsers24h,
+  ] = await Promise.all([
     Promise.all([
       buildRange(prisma, 'day', 'День', 'hour', dayAgo, now),
       buildRange(prisma, 'week', 'Неделя', 'day', weekAgo, now),
@@ -934,6 +1017,62 @@ async function buildAnalyticsDashboardData(prisma: PrismaService) {
     prisma.user.count({
       where: { isGuest: false, lastSeenAt: { gte: onlineSince } },
     }),
+    fetchLiveVoiceStats(config),
+    realtime.countOnlineUsers(),
+    prisma.message.count({
+      where: {
+        createdAt: { gte: hourAgo },
+        kind: MessageKind.USER,
+      },
+    }),
+    prisma.message.count({
+      where: {
+        createdAt: { gte: dayAgo },
+        kind: MessageKind.USER,
+      },
+    }),
+    prisma.message.groupBy({
+      by: ['conversationId'],
+      where: {
+        createdAt: { gte: dayAgo },
+        kind: MessageKind.USER,
+      },
+    }),
+    prisma.conversation.count({
+      where: { lastMessageAt: { gte: chatHotSince } },
+    }),
+    prisma.conversation.count(),
+    prisma.message.count({
+      where: {
+        createdAt: { gte: dayAgo },
+        kind: MessageKind.MISSED_VOICE_CALL,
+      },
+    }),
+    // Voice notes: Message media with durationSec (set only for voice uploads).
+    prisma.media.count({
+      where: {
+        entityType: 'Message',
+        durationSec: { not: null },
+        createdAt: { gte: hourAgo },
+      },
+    }),
+    prisma.media.count({
+      where: {
+        entityType: 'Message',
+        durationSec: { not: null },
+        createdAt: { gte: dayAgo },
+      },
+    }),
+    prisma.messageReaction.count({
+      where: { createdAt: { gte: hourAgo } },
+    }),
+    prisma.messageReaction.count({
+      where: { createdAt: { gte: dayAgo } },
+    }),
+    prisma.messageReaction.groupBy({
+      by: ['userId'],
+      where: { createdAt: { gte: dayAgo } },
+    }),
   ]);
 
   return {
@@ -942,6 +1081,25 @@ async function buildAnalyticsDashboardData(prisma: PrismaService) {
       profilesActive,
       usersOnline,
       onlineWindowMinutes: Math.round(ONLINE_WINDOW_MS / 60_000),
+    },
+    live: {
+      refreshedAt: now.toISOString(),
+      wsOnline,
+      voiceRooms: voice.rooms,
+      voiceParticipants: voice.participants,
+      voiceConfigured: voice.configured,
+      voiceError: voice.error,
+      messagesLastHour,
+      messagesLast24h,
+      activeConversations24h: activeConversations24h.length,
+      hotConversations15m: hotConversations,
+      conversationsTotal,
+      missedCalls24h,
+      voiceMessagesLastHour,
+      voiceMessagesLast24h,
+      reactionsLastHour,
+      reactionsLast24h,
+      reactingUsers24h: reactingUsers24h.length,
     },
     ranges: Object.fromEntries(ranges.map((r) => [r.key, r])) as Record<
       ChartRange,
@@ -1106,6 +1264,7 @@ export async function setupAdmin(
   const rewards = app.get(RewardsService);
   const partners = app.get(PartnersService);
   const userGameSystems = app.get(UserGameSystemsService);
+  const realtime = app.get(RealtimeEmitter);
 
   const admin = new AdminJS({
     rootPath: '/admin',
@@ -1123,7 +1282,8 @@ export async function setupAdmin(
     },
     dashboard: {
       component: dashboardComponent,
-      handler: async () => buildAnalyticsDashboardData(prisma),
+      handler: async () =>
+        buildAnalyticsDashboardData(prisma, configService, realtime),
     },
     pages: {
       grantRewards: {
