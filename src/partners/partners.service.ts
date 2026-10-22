@@ -14,6 +14,7 @@ export type PublicPartnerDto = {
   name: string;
   href: string;
   mark: string;
+  tagline: string;
   accent: string;
   logoUrl: string | null;
 };
@@ -44,15 +45,21 @@ export class PartnersService {
     private readonly config: ConfigService,
   ) {}
 
-  async listPublic(): Promise<PublicPartnerDto[]> {
+  async listPublic(options?: {
+    sidebarOnly?: boolean;
+  }): Promise<PublicPartnerDto[]> {
     const rows = await this.prisma.partner.findMany({
-      where: { isActive: true },
+      where: {
+        isActive: true,
+        ...(options?.sidebarOnly ? { showInSidebar: true } : {}),
+      },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
       select: {
         id: true,
         name: true,
         href: true,
         mark: true,
+        tagline: true,
         accent: true,
         logoUrl: true,
       },
@@ -63,6 +70,7 @@ export class PartnersService {
       name: row.name,
       href: row.href,
       mark: row.mark.trim() || markFromName(row.name),
+      tagline: row.tagline.trim(),
       accent: row.accent || '#157AFE',
       logoUrl: row.logoUrl,
     }));

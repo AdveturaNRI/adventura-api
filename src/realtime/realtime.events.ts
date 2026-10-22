@@ -6,6 +6,7 @@ export const REALTIME_EVENTS = {
   CONVERSATION_READ: 'conversation:read',
   CONVERSATION_DELETED: 'conversation:deleted',
   NOTIFICATION_NEW: 'notification:new',
+  ANNOUNCEMENT_PUBLISHED: 'announcement:published',
   UNREAD_SYNC: 'unread:sync',
   PRESENCE_UPDATE: 'presence:update',
   CALL_INVITE: 'call:invite',
@@ -17,6 +18,11 @@ export const REALTIME_EVENTS = {
 export type UnreadSyncPayload = {
   chats: number;
   notifications: number;
+};
+
+export type AnnouncementPublishedPayload = {
+  id: string;
+  publicationVersion: number;
 };
 
 export type PresenceUpdatePayload = {

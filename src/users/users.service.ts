@@ -317,17 +317,9 @@ export class UsersService {
         return [];
       }
 
+      // Избранные/скрытые — уже известные люди: закрытая анкета всё равно видна.
       const users = await this.prisma.user.findMany({
-        where:
-          bucket === 'skipped' && blockedByMeIds.size > 0
-            ? {
-                id: { in: targetIds },
-                OR: [{ isPublic: true }, { id: { in: [...blockedByMeIds] } }],
-              }
-            : {
-                id: { in: targetIds },
-                isPublic: true,
-              },
+        where: { id: { in: targetIds } },
         select: USER_PROFILE_SELECT,
         orderBy: { updatedAt: 'desc' },
         take: 100,
@@ -493,16 +485,32 @@ export class UsersService {
     );
     const excludeIds = [...new Set([viewerId, ...blockedByMeIds, ...blockedMeIds])];
 
-    const users = await this.prisma.user.findMany({
-      where: {
-        isPublic: true,
-        id: { notIn: excludeIds },
-        nickname: { contains: q, mode: 'insensitive' },
-      },
-      select: USER_PROFILE_SELECT,
-      orderBy: { nickname: 'asc' },
-      take: 30,
-    });
+    // Точный ник (без учёта регистра) находит и закрытую анкету.
+    // Partial contains — только публичные.
+    const [exactMatch, publicMatches] = await Promise.all([
+      this.prisma.user.findFirst({
+        where: {
+          id: { notIn: excludeIds },
+          nickname: { equals: q, mode: 'insensitive' },
+        },
+        select: USER_PROFILE_SELECT,
+      }),
+      this.prisma.user.findMany({
+        where: {
+          isPublic: true,
+          id: { notIn: excludeIds },
+          nickname: { contains: q, mode: 'insensitive' },
+        },
+        select: USER_PROFILE_SELECT,
+        orderBy: { nickname: 'asc' },
+        take: 30,
+      }),
+    ]);
+
+    const users = [
+      ...(exactMatch ? [exactMatch] : []),
+      ...publicMatches.filter((user) => user.id !== exactMatch?.id),
+    ].slice(0, 30);
 
     const reactions = await this.prisma.wandererReaction.findMany({
       where: {
@@ -566,29 +574,14 @@ export class UsersService {
       throw new NotFoundException('Пользователь не найден');
     }
 
-    // Чужая анкета видна, если она публичная или с пользователем есть диалог.
+    // Закрытая анкета открывается по прямой ссылке / точному поиску.
+    // В ленте и fuzzy-поиске она по-прежнему не светится.
     const blockRow = await this.prisma.userBlock.findUnique({
       where: {
         blockerId_blockedId: { blockerId: viewerId, blockedId: targetUserId },
       },
       select: { id: true },
     });
-
-    if (!target.isPublic) {
-      const shared = await this.prisma.conversationParticipant.findFirst({
-        where: {
-          userId: viewerId,
-          conversation: {
-            participants: { some: { userId: targetUserId } },
-          },
-        },
-        select: { conversationId: true },
-      });
-
-      if (!shared) {
-        throw new NotFoundException('Анкета недоступна');
-      }
-    }
 
     const card = await this.toWandererCard(target, {
       blockedByMe: Boolean(blockRow),
@@ -642,18 +635,12 @@ export class UsersService {
       favoriteIds.length === 0
         ? Promise.resolve(0)
         : this.prisma.user.count({
-            where: { id: { in: favoriteIds }, isPublic: true },
+            where: { id: { in: favoriteIds } },
           }),
       skippedIds.length === 0
         ? Promise.resolve(0)
         : this.prisma.user.count({
-            where:
-              blockedByMeIds.size > 0
-                ? {
-                    id: { in: skippedIds },
-                    OR: [{ isPublic: true }, { id: { in: [...blockedByMeIds] } }],
-                  }
-                : { id: { in: skippedIds }, isPublic: true },
+            where: { id: { in: skippedIds } },
           }),
     ]);
 
@@ -671,10 +658,11 @@ export class UsersService {
 
     const target = await this.prisma.user.findUnique({
       where: { id: targetUserId },
-      select: { id: true, isPublic: true },
+      select: { id: true },
     });
 
-    if (!target || !target.isPublic) {
+    // Закрытая анкета не в ленте, но избранное из чата / прямой ссылки должно работать.
+    if (!target) {
       throw new NotFoundException('Анкета не найдена');
     }
 

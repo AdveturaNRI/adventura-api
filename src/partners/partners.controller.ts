@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Res } from '@nestjs/common';
+import { Controller, Get, Param, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 
 import { PartnersService } from './partners.service';
@@ -7,10 +7,15 @@ import { PartnersService } from './partners.service';
 export class PartnersController {
   constructor(private readonly partners: PartnersService) {}
 
-  /** Публичный список активных партнёров для бегущей строки на клиенте. */
+  /**
+   * Публичный список партнёров.
+   * `?sidebar=1` — только с галкой «В боковом меню» (и активные).
+   */
   @Get()
-  list() {
-    return this.partners.listPublic();
+  list(@Query('sidebar') sidebar?: string) {
+    const sidebarOnly =
+      sidebar === '1' || sidebar === 'true' || sidebar === 'yes';
+    return this.partners.listPublic({ sidebarOnly });
   }
 
   /** Стабильный URL логотипа (без протухающих signed S3 links). */

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
+import { AnnouncementsModule } from './announcements/announcements.module';
 import { AppSettingsModule } from './app-settings/app-settings.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AuthModule } from './auth/auth.module';
@@ -34,6 +35,7 @@ import { UsersModule } from './users/users.module';
     MailModule,
     MarketingModule,
     AppSettingsModule,
+    AnnouncementsModule,
     AnalyticsModule,
     AuthModule,
     ReferenceModule,
