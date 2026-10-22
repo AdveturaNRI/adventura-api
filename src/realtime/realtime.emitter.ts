@@ -10,6 +10,7 @@ import {
   type ConversationDeletedPayload,
   type ConversationReadPayload,
   type PresenceUpdatePayload,
+  type TypingUpdatePayload,
   type UnreadSyncPayload,
 } from './realtime.events';
 
@@ -188,6 +189,10 @@ export class RealtimeEmitter implements OnModuleDestroy {
 
   emitPresenceUpdate(userIds: string[], payload: PresenceUpdatePayload) {
     this.emitToUsers(userIds, REALTIME_EVENTS.PRESENCE_UPDATE, payload);
+  }
+
+  emitTypingUpdate(userIds: string[], payload: TypingUpdatePayload) {
+    this.emitToUsers(userIds, REALTIME_EVENTS.TYPING_UPDATE, payload);
   }
 
   emitCallInvite(userIds: string[], payload: CallInvitePayload) {
