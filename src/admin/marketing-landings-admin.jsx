@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClient } from 'adminjs';
 import { Box, Button, Header, Input, Label, MessageBox, Select, Text, TextArea } from '@adminjs/design-system';
 import { buildPreviewHtml, normalizeTheme } from './marketing-landing-preview';
@@ -219,6 +219,88 @@ function pickOption(options, value) {
   return options.find((o) => o.value === value) ?? options[0] ?? null;
 }
 
+const ALLOWED_BLOCK_TYPES = new Set(Object.keys(BLOCK_META));
+
+/**
+ * Accepts either bare LandingContent `{ theme, blocks }` or a wrapped export
+ * `{ name, slug, description, content|draftContent, seo|draftSeo }`.
+ */
+function parseLandingImport(rawText) {
+  let data;
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    throw new Error('Файл не является валидным JSON');
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('Корень JSON должен быть объектом');
+  }
+
+  const content =
+    data.draftContent && typeof data.draftContent === 'object' && !Array.isArray(data.draftContent)
+      ? data.draftContent
+      : data.content && typeof data.content === 'object' && !Array.isArray(data.content)
+        ? data.content
+        : data;
+
+  if (!Array.isArray(content.blocks)) {
+    throw new Error('Ожидается поле blocks: [] (или content.blocks / draftContent.blocks)');
+  }
+  if (!content.blocks.length) {
+    throw new Error('blocks пустой — нечего импортировать');
+  }
+
+  const unknown = [
+    ...new Set(
+      content.blocks
+        .map((block) => block?.type)
+        .filter((type) => type && !ALLOWED_BLOCK_TYPES.has(type)),
+    ),
+  ];
+  if (unknown.length) {
+    throw new Error(`Неизвестные типы блоков: ${unknown.join(', ')}`);
+  }
+
+  const badIndex = content.blocks.findIndex(
+    (block) => !block || typeof block !== 'object' || Array.isArray(block) || !block.type,
+  );
+  if (badIndex >= 0) {
+    throw new Error(`Блок #${badIndex + 1} без type`);
+  }
+
+  const blocks = content.blocks.map((block) => ({
+    ...block,
+    id: typeof block.id === 'string' && block.id.trim() ? block.id : uid(),
+  }));
+
+  const meta = {};
+  if (typeof data.name === 'string' && data.name.trim()) meta.name = data.name.trim();
+  if (typeof data.slug === 'string' && data.slug.trim()) meta.slug = data.slug.trim();
+  if (typeof data.description === 'string') meta.description = data.description;
+
+  const seoSource = data.draftSeo ?? data.seo;
+  let draftSeo = null;
+  if (seoSource && typeof seoSource === 'object' && !Array.isArray(seoSource)) {
+    draftSeo = {
+      title: String(seoSource.title ?? ''),
+      description: String(seoSource.description ?? ''),
+      image: String(seoSource.image ?? ''),
+      canonical: String(seoSource.canonical ?? ''),
+      robots: String(seoSource.robots ?? 'index,follow'),
+    };
+  }
+
+  return {
+    draftContent: {
+      theme: normalizeTheme(content.theme ?? defaultTheme),
+      blocks,
+    },
+    meta,
+    draftSeo,
+    blockCount: blocks.length,
+  };
+}
+
 function FieldHint({ children }) {
   return (
     <Text mt="sm" color="grey60" style={{ fontSize: 12, lineHeight: 1.4 }}>
@@ -234,6 +316,7 @@ export default function MarketingLandingsAdmin() {
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState('desktop');
   const [showSeo, setShowSeo] = useState(false);
+  const importFileRef = useRef(null);
 
   const draft = useMemo(() => {
     if (!current) return empty;
@@ -293,6 +376,43 @@ export default function MarketingLandingsAdmin() {
     if (target < 0 || target >= next.length) return;
     [next[index], next[target]] = [next[target], next[index]];
     mutateBlocks(next);
+  };
+
+  const applyLandingImport = useCallback(
+    (parsed) => {
+      const base = current
+        ? draft
+        : {
+            ...empty,
+            draftContent: { blocks: [], theme: { ...defaultTheme } },
+          };
+      setCurrent({
+        ...base,
+        ...parsed.meta,
+        draftContent: parsed.draftContent,
+        ...(parsed.draftSeo ? { draftSeo: parsed.draftSeo } : {}),
+      });
+      setNotice({
+        type: 'success',
+        message: `Импортировано блоков: ${parsed.blockCount}. Проверь превью → «Сохранить черновик» → «Опубликовать».`,
+      });
+    },
+    [current, draft],
+  );
+
+  const onImportJsonFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const text = await file.text();
+      applyLandingImport(parseLandingImport(text));
+    } catch (error) {
+      setNotice({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Не удалось импортировать JSON',
+      });
+    }
   };
 
   const send = async (action, extra) => {
@@ -415,11 +535,30 @@ export default function MarketingLandingsAdmin() {
         <MessageBox mt="lg" message={notice.message} variant={notice.type === 'error' ? 'danger' : 'success'} />
       )}
 
+      <input
+        ref={importFileRef}
+        type="file"
+        accept="application/json,.json"
+        style={{ display: 'none' }}
+        onChange={(event) => void onImportJsonFile(event)}
+      />
+
       <Box display="grid" style={{ gridTemplateColumns: '240px minmax(0, 1fr)', gap: 24, maxWidth: 1480 }} mt="xl">
         <Box>
           <Button width={1} variant="primary" onClick={() => setCurrent({ ...empty, draftContent: { blocks: [], theme: { ...defaultTheme } } })}>
             + Новый лендинг
           </Button>
+          <Button
+            width={1}
+            mt="sm"
+            disabled={busy}
+            onClick={() => importFileRef.current?.click()}>
+            Импорт JSON
+          </Button>
+          <FieldHint>
+            Файл вида <code>{'{ theme, blocks }'}</code> или полный экспорт с name/slug/seo.
+            Открытый лендинг — заменит черновик; иначе создаст новый в редакторе.
+          </FieldHint>
           {items.map((item) => (
             <Box
               key={item.id}
@@ -746,6 +885,9 @@ export default function MarketingLandingsAdmin() {
                 <Box mt="xl" display="flex" style={{ gap: 8, flexWrap: 'wrap' }}>
                   <Button variant="primary" disabled={busy} onClick={() => send(draft.id ? 'save' : 'create')}>
                     Сохранить черновик
+                  </Button>
+                  <Button disabled={busy} onClick={() => importFileRef.current?.click()}>
+                    Импорт JSON
                   </Button>
                   {draft.id ? (
                     <>
