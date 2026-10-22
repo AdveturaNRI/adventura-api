@@ -71,7 +71,7 @@ export class RealtimeGateway
       client.data.userId = user.id;
       await client.join(this.emitter.userRoom(user.id));
 
-      const becameOnline = this.emitter.markOnline(user.id, client.id);
+      const becameOnline = await this.emitter.markOnline(user.id, client.id);
       const now = new Date();
       await this.prisma.user.update({
         where: { id: user.id },
@@ -104,7 +104,7 @@ export class RealtimeGateway
       return;
     }
 
-    const becameOffline = this.emitter.markOffline(userId, client.id);
+    const becameOffline = await this.emitter.markOffline(userId, client.id);
     if (!becameOffline) {
       return;
     }

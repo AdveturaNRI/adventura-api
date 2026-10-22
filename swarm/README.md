@@ -144,8 +144,20 @@ after a deploy; inspect its logs before treating the release as successful.
 
 ## Storage and scaling
 
-This stack runs one API replica because `uploads` is a local named volume.
-Do not increase `api` replicas or remove its placement constraint until media
-has moved to S3-compatible storage or a shared volume driver is configured.
+Media: do not remove the API placement constraint / shared volume story until
+uploads are on S3 (or a shared volume driver).
+
+Realtime (`/realtime` Socket.IO): **replicas > 1 require `REDIS_URL`** and a
+Redis service on the `backend` network. Without Redis, `emitToUser` only reaches
+sockets on the same Nest process — chat messages look “missing” on the client
+while REST history is fine. Presence also uses Redis (`rt:online:*`).
+
+Voice-call invite state (`activeVoiceCalls` in `chats.service`) is still
+in-memory — keep call signaling on one replica or move that map to Redis/DB
+before relying on multi-node for calls.
+
+Optional Traefik sticky cookie for `/socket.io` helps handshake/polling; it does
+**not** replace the Redis adapter for cross-user emits.
+
 PostgreSQL has no published port and is reachable only by the API over the
 internal `backend` network.

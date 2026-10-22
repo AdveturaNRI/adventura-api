@@ -259,7 +259,7 @@ export class PushSubscriptionsService implements OnModuleInit {
     if (!this.fcmConfigured && !this.webpushConfigured) {
       return;
     }
-    if (this.realtime.isOnline(userId)) {
+    if (await this.realtime.isOnline(userId)) {
       return;
     }
 

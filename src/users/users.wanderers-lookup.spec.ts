@@ -123,7 +123,7 @@ describe('UsersService wanderers private lookup', () => {
     };
 
     const realtime = {
-      isPresent: jest.fn().mockReturnValue(false),
+      isPresent: jest.fn().mockResolvedValue(false),
     };
 
     const notificationsService = {

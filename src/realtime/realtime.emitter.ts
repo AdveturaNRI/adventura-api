@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { createClient, type RedisClientType } from 'redis';
 import { Server } from 'socket.io';
 
 import {
@@ -13,15 +14,49 @@ import {
 } from './realtime.events';
 
 @Injectable()
-export class RealtimeEmitter {
+export class RealtimeEmitter implements OnModuleDestroy {
+  private readonly logger = new Logger(RealtimeEmitter.name);
   private server: Server | null = null;
+  /** Fallback when REDIS_URL is unset (single-node / local). */
   private readonly onlineSockets = new Map<string, Set<string>>();
+  private redis: RedisClientType | null = null;
 
   setServer(server: Server) {
     this.server = server;
   }
 
-  markOnline(userId: string, socketId: string): boolean {
+  /** Shared presence across API replicas. Same Redis as Socket.IO adapter. */
+  async connectPresence(url: string): Promise<void> {
+    const client: RedisClientType = createClient({ url });
+    client.on('error', (err) =>
+      this.logger.error(`Presence Redis: ${err.message}`),
+    );
+    await client.connect();
+    this.redis = client;
+    this.logger.log('Realtime presence store connected');
+  }
+
+  async onModuleDestroy() {
+    if (this.redis?.isOpen) {
+      await this.redis.quit().catch(() => undefined);
+    }
+  }
+
+  private presenceKey(userId: string) {
+    return `rt:online:${userId}`;
+  }
+
+  /** @returns true if this was the first socket for the user (became online). */
+  async markOnline(userId: string, socketId: string): Promise<boolean> {
+    if (this.redis) {
+      const key = this.presenceKey(userId);
+      const before = await this.redis.sCard(key);
+      await this.redis.sAdd(key, socketId);
+      // Safety TTL if disconnect hook is missed (crash / kill -9).
+      await this.redis.expire(key, 60 * 60 * 24);
+      return before === 0;
+    }
+
     let sockets = this.onlineSockets.get(userId);
     if (!sockets) {
       sockets = new Set();
@@ -32,7 +67,19 @@ export class RealtimeEmitter {
     return wasOffline;
   }
 
-  markOffline(userId: string, socketId: string): boolean {
+  /** @returns true if the user has no sockets left (became offline). */
+  async markOffline(userId: string, socketId: string): Promise<boolean> {
+    if (this.redis) {
+      const key = this.presenceKey(userId);
+      await this.redis.sRem(key, socketId);
+      const left = await this.redis.sCard(key);
+      if (left === 0) {
+        await this.redis.del(key);
+        return true;
+      }
+      return false;
+    }
+
     const sockets = this.onlineSockets.get(userId);
     if (!sockets) {
       return true;
@@ -45,7 +92,10 @@ export class RealtimeEmitter {
     return false;
   }
 
-  isOnline(userId: string): boolean {
+  async isOnline(userId: string): Promise<boolean> {
+    if (this.redis) {
+      return (await this.redis.sCard(this.presenceKey(userId))) > 0;
+    }
     return (this.onlineSockets.get(userId)?.size ?? 0) > 0;
   }
 
@@ -53,8 +103,8 @@ export class RealtimeEmitter {
    * Online for chat UI: active websocket, or recent HTTP activity from any app section.
    * Keeps "в сети" accurate when the user browses games/profile without opening chats.
    */
-  isPresent(userId: string, lastSeenAt?: Date | null): boolean {
-    if (this.isOnline(userId)) {
+  async isPresent(userId: string, lastSeenAt?: Date | null): Promise<boolean> {
+    if (await this.isOnline(userId)) {
       return true;
     }
     if (!lastSeenAt) {
@@ -63,7 +113,7 @@ export class RealtimeEmitter {
     return Date.now() - lastSeenAt.getTime() < 90_000;
   }
 
-  /** Unique users with at least one active socket. */
+  /** Unique users with at least one active socket (local-only without Redis). */
   onlineCount(): number {
     return this.onlineSockets.size;
   }

@@ -609,7 +609,7 @@ export class ChatsService {
           nickname: participant.user.nickname,
           avatarUrl: await this.getAvatarUrl(participant.user.id),
           role: toChatMemberRole(participant.role),
-          online: this.realtime.isPresent(
+          online: await this.realtime.isPresent(
             participant.user.id,
             participant.user.lastSeenAt,
           ),
@@ -4322,7 +4322,7 @@ export class ChatsService {
       id: peer.id,
       nickname: peer.nickname,
       avatarUrl: await this.getAvatarUrl(peer.id),
-      online: this.realtime.isPresent(peer.id, peer.lastSeenAt),
+      online: await this.realtime.isPresent(peer.id, peer.lastSeenAt),
       lastSeenAt: peer.lastSeenAt?.toISOString() ?? null,
       badges: look.badges,
       avatarFrameId: look.avatarFrameId,
