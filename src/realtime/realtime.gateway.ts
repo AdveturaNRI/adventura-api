@@ -63,7 +63,7 @@ export class RealtimeGateway
 
       const user = await this.prisma.user.findUnique({
         where: { id: payload.sub },
-        select: { id: true },
+        select: { id: true, nickname: true },
       });
 
       if (!user) {
@@ -73,9 +73,10 @@ export class RealtimeGateway
 
       client.data.userId = user.id;
       client.data.nickname =
-        typeof payload.nickname === 'string' && payload.nickname.trim()
+        user.nickname?.trim() ||
+        (typeof payload.nickname === 'string' && payload.nickname.trim()
           ? payload.nickname.trim()
-          : 'Участник';
+          : 'Участник');
       await client.join(this.emitter.userRoom(user.id));
 
       const becameOnline = await this.emitter.markOnline(user.id, client.id);
