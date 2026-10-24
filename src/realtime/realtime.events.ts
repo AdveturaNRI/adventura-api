@@ -9,6 +9,7 @@ export const REALTIME_EVENTS = {
   ANNOUNCEMENT_PUBLISHED: 'announcement:published',
   UNREAD_SYNC: 'unread:sync',
   PRESENCE_UPDATE: 'presence:update',
+  TYPING_UPDATE: 'typing:update',
   CALL_INVITE: 'call:invite',
   CALL_ACCEPTED: 'call:accepted',
   CALL_DECLINED: 'call:declined',
@@ -29,6 +30,13 @@ export type PresenceUpdatePayload = {
   userId: string;
   online: boolean;
   lastSeenAt: string | null;
+};
+
+export type TypingUpdatePayload = {
+  conversationId: string;
+  userId: string;
+  nickname: string;
+  typing: boolean;
 };
 
 export type ConversationReadPayload = {

@@ -2,16 +2,19 @@ import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import {
+  ConnectedSocket,
+  MessageBody,
   OnGatewayConnection,
   OnGatewayDisconnect,
   OnGatewayInit,
+  SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 
 import { PrismaService } from '../prisma/prisma.service';
-import { REALTIME_EVENTS } from './realtime.events';
+import { REALTIME_EVENTS, type TypingUpdatePayload } from './realtime.events';
 import { RealtimeEmitter } from './realtime.emitter';
 
 type JwtPayload = {
@@ -60,7 +63,7 @@ export class RealtimeGateway
 
       const user = await this.prisma.user.findUnique({
         where: { id: payload.sub },
-        select: { id: true },
+        select: { id: true, nickname: true },
       });
 
       if (!user) {
@@ -69,6 +72,11 @@ export class RealtimeGateway
       }
 
       client.data.userId = user.id;
+      client.data.nickname =
+        user.nickname?.trim() ||
+        (typeof payload.nickname === 'string' && payload.nickname.trim()
+          ? payload.nickname.trim()
+          : 'Участник');
       await client.join(this.emitter.userRoom(user.id));
 
       const becameOnline = await this.emitter.markOnline(user.id, client.id);
@@ -116,6 +124,59 @@ export class RealtimeGateway
     });
     await this.broadcastPresence(userId, false, now);
     this.logger.debug(`WS disconnected user:${userId}`);
+  }
+
+  @SubscribeMessage(REALTIME_EVENTS.TYPING_UPDATE)
+  async handleTypingUpdate(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { conversationId?: unknown; typing?: unknown },
+  ) {
+    const userId = client.data?.userId as string | undefined;
+    if (!userId) {
+      return;
+    }
+
+    const conversationId =
+      typeof body?.conversationId === 'string' ? body.conversationId.trim() : '';
+    if (!conversationId) {
+      return;
+    }
+
+    const typing = body?.typing === true;
+    const membership = await this.prisma.conversationParticipant.findUnique({
+      where: {
+        conversationId_userId: { conversationId, userId },
+      },
+      select: { conversationId: true },
+    });
+    if (!membership) {
+      return;
+    }
+
+    const peers = await this.prisma.conversationParticipant.findMany({
+      where: {
+        conversationId,
+        userId: { not: userId },
+      },
+      select: { userId: true },
+    });
+    const peerIds = peers.map((row) => row.userId);
+    if (peerIds.length === 0) {
+      return;
+    }
+
+    const nickname =
+      typeof client.data?.nickname === 'string' && client.data.nickname.trim()
+        ? client.data.nickname.trim()
+        : 'Участник';
+
+    const payload: TypingUpdatePayload = {
+      conversationId,
+      userId,
+      nickname,
+      typing,
+    };
+    this.emitter.emitTypingUpdate(peerIds, payload);
   }
 
   private async broadcastPresence(userId: string, online: boolean, lastSeenAt: Date) {
