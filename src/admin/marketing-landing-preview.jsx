@@ -82,14 +82,20 @@ const BLOCK_LABELS = {
   hero: 'Главный экран',
   features: 'Преимущества',
   steps: 'Как это работает',
+  introColumns: 'Знакомство в колонках',
   gameFeed: 'Лента игр',
   clubFeed: 'Лента клубов',
+  wandererFeed: 'Лента Странников',
+  publicationFeed: 'Публикации',
+  appShowcase: 'Витрина приложения',
   testimonials: 'Отзывы',
   faq: 'Вопросы и ответы',
   stats: 'Цифры',
   quote: 'Цитата',
   cta: 'Кнопка действия',
   media: 'Картинка',
+  contact: 'Контакты',
+  footer: 'Подвал',
 };
 
 function sectionHeader(typeLabel, title, description) {
@@ -236,12 +242,63 @@ function renderBlockHtml(block) {
     </section>`;
   }
 
-  if (type === 'gameFeed' || type === 'clubFeed') {
+  if (type === 'gameFeed' || type === 'clubFeed' || type === 'wandererFeed' || type === 'publicationFeed') {
+    const feedHint =
+      type === 'gameFeed'
+        ? 'Карточки игр с API'
+        : type === 'clubFeed'
+          ? 'Карточки клубов с API'
+          : type === 'wandererFeed'
+            ? 'Публичные анкеты Странников'
+            : 'Публикации авторов';
+    const layout = esc(block?.layout || 'grid');
     return `<section class="block">
       ${sectionHeader(typeLabel, title, description)}
-      <div class="feed-card"><div class="feed-cover"></div><div><strong>${
-        type === 'gameFeed' ? 'Карточки игр с API' : 'Карточки клубов с API'
-      }</strong><div class="item-copy">На сайте подтянутся автоматически</div></div></div>
+      <div class="feed-card"><div class="feed-cover"></div><div><strong>${feedHint}</strong><div class="item-copy">Вид: ${layout} · на сайте подтянутся автоматически</div></div></div>
+    </section>`;
+  }
+
+  if (type === 'introColumns') {
+    const columns = Array.isArray(block?.columns) ? block.columns : [];
+    const cards = columns
+      .map((col, idx) => {
+        const colTitle = esc(col?.title || `Колонка ${idx + 1}`);
+        const items = Array.isArray(col?.items) ? col.items : [];
+        const lines = items
+          .slice(0, 4)
+          .map((item) => `<li>${esc(item?.title || 'Пункт')}</li>`)
+          .join('');
+        return `<div class="feature"><strong>${colTitle}</strong><ul class="item-copy" style="margin:8px 0 0;padding-left:18px">${lines || '<li>—</li>'}</ul></div>`;
+      })
+      .join('');
+    return `<section class="block">
+      ${sectionHeader(typeLabel, title, description)}
+      <div class="features">${cards || '<p class="hint">Добавь колонки слева</p>'}</div>
+    </section>`;
+  }
+
+  if (type === 'appShowcase') {
+    return `<section class="block">
+      ${sectionHeader(typeLabel, title, description)}
+      ${imageUrl ? `<div class="media"><img src="${imageUrl}" alt="" /></div>` : '<p class="hint">Укажи URL скриншота</p>'}
+      ${ctaLabel ? `<span class="cta cta-surface">${ctaLabel}</span>` : ''}
+    </section>`;
+  }
+
+  if (type === 'footer') {
+    const groups = Array.isArray(block?.groups) ? block.groups : [];
+    const socials = Array.isArray(block?.socials) ? block.socials : [];
+    const groupHtml = groups
+      .map((g) => `<div><strong>${esc(g?.title || 'Группа')}</strong><div class="item-copy">${esc((g?.links || []).map((l) => l?.label).filter(Boolean).join(' · ') || '—')}</div></div>`)
+      .join('');
+    const socialHtml = socials
+      .map((s) => esc(s?.label || s?.url || ''))
+      .filter(Boolean)
+      .join(' · ');
+    return `<section class="block">
+      ${sectionHeader(typeLabel, title || 'Подвал', description)}
+      <div class="features">${groupHtml || '<p class="hint">Группы ссылок</p>'}</div>
+      ${socialHtml ? `<p class="muted" style="margin-top:12px">${socialHtml}</p>` : ''}
     </section>`;
   }
 

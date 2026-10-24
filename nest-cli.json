@@ -5,6 +5,8 @@
   "compilerOptions": {
     "deleteOutDir": true,
     "assets": [
+      { "include": "admin/**/*.json", "watchAssets": true },
+      { "include": "admin/**/*.json", "outDir": "dist/src", "watchAssets": true },
       {
         "include": "admin/**/*.jsx",
         "watchAssets": true

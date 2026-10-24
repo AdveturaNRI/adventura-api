@@ -1,3 +1,6 @@
+import welcome from './marketing-welcome.json';
+import { validateMarketingContent } from './marketing-content-validation';
+import { MarketingNestedEditor } from './marketing-nested-editor';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClient } from 'adminjs';
 import { Box, Button, Header, Input, Label, MessageBox, Select, Text, TextArea } from '@adminjs/design-system';
@@ -23,6 +26,9 @@ const empty = {
 };
 
 const BLOCK_META = {
+  introColumns: { label: 'Знакомство в колонках', fields: ['title', 'description'] },
+  wandererFeed: { label: 'Странники', fields: ['title', 'description', 'limit', 'ctaLabel', 'ctaUrl'] },
+  publicationFeed: { label: 'Публикации', fields: ['title', 'description', 'limit', 'ctaLabel', 'ctaUrl'] },
   hero: {
     label: 'Главный экран',
     hint: 'Широкий hero: заголовок, 2 CTA, картинка справа/фон.',
@@ -121,13 +127,16 @@ function uid() {
 
 function createDefaultBlock(type) {
   const id = uid();
+  if (['introColumns', 'wandererFeed', 'publicationFeed'].includes(type)) {
+    return { ...JSON.parse(JSON.stringify(welcome.content.blocks.find(block => block.type === type))), id };
+  }
   if (type === 'hero') {
     return {
       id, type,
       title: 'Настоящие люди. Реальные приключения.',
       description: 'Находи единомышленников, собирайся на игры и создавай свои истории вместе с Adventura.',
-      ctaLabel: 'Найти игру', ctaUrl: '/games',
-      secondaryCtaLabel: 'Стать мастером', secondaryCtaUrl: '/register',
+      ctaLabel: 'Зарегистрироваться', ctaUrl: '/auth/register',
+      secondaryCtaLabel: 'Посмотреть игры', secondaryCtaUrl: '/games', secondaryCtaVariant: 'link',
       imagePosition: 'right', trustText: 'Сообщество мастеров и игроков Adventura',
     };
   }
@@ -159,7 +168,7 @@ function createDefaultBlock(type) {
   if (type === 'gameFeed') return { id, type, title: 'Популярные игры рядом с тобой', limit: 4, ctaLabel: 'Смотреть все', ctaUrl: '/games' };
   if (type === 'testimonials') return { id, type, title: 'Что говорят наши пользователи', items: [{ id: uid(), title: 'Игрок', description: 'Добавьте реальный отзыв.', meta: 'Игрок' }] };
   if (type === 'clubFeed') return { id, type, title: 'Найди клуб рядом с собой', limit: 4, ctaLabel: 'Смотреть все', ctaUrl: '/clubs' };
-  if (type === 'cta') return { id, type, title: 'Готов к новым приключениям?', description: 'Присоединяйся к Adventura.', ctaLabel: 'Начать приключение', ctaUrl: '/register' };
+  if (type === 'cta') return { id, type, title: 'Готов к новым приключениям?', description: 'Присоединяйся к Adventura.', ctaLabel: 'Начать приключение', ctaUrl: '/auth/register' };
   if (type === 'faq') {
     return {
       id, type, title: 'Частые вопросы',
@@ -272,6 +281,7 @@ function parseLandingImport(rawText) {
     ...block,
     id: typeof block.id === 'string' && block.id.trim() ? block.id : uid(),
   }));
+  validateMarketingContent({ blocks });
 
   const meta = {};
   if (typeof data.name === 'string' && data.name.trim()) meta.name = data.name.trim();
@@ -416,6 +426,8 @@ export default function MarketingLandingsAdmin() {
   };
 
   const send = async (action, extra) => {
+    try { validateMarketingContent(draft.draftContent); }
+    catch (error) { setNotice({ type: 'error', message: error.message }); return; }
     setBusy(true);
     try {
       const data = new FormData();
@@ -559,6 +571,10 @@ export default function MarketingLandingsAdmin() {
             Файл вида <code>{'{ theme, blocks }'}</code> или полный экспорт с name/slug/seo.
             Открытый лендинг — заменит черновик; иначе создаст новый в редакторе.
           </FieldHint>
+          <Button width={1} mt="sm" onClick={() => {
+            const parsed = parseLandingImport(JSON.stringify(welcome));
+            setCurrent({ ...empty, ...parsed.meta, draftContent: parsed.draftContent, draftSeo: parsed.draftSeo });
+          }}>Шаблон знакомства</Button>
           {items.map((item) => (
             <Box
               key={item.id}
@@ -791,6 +807,13 @@ export default function MarketingLandingsAdmin() {
                         ) : null}
                       </Box>
 
+                      {block.type === 'hero' ? <Box mt="md"><Label>Оформление второй кнопки</Label><Select options={[{ value: 'secondary', label: 'Вторичная' }, { value: 'ghost', label: 'Ghost' }, { value: 'link', label: 'Текстовая ссылка' }]} value={{ value: block.secondaryCtaVariant ?? 'secondary', label: block.secondaryCtaVariant ?? 'secondary' }} onChange={v => patchBlock(i, { secondaryCtaVariant: v.value })} /></Box> : null}
+                      {['gameFeed', 'clubFeed', 'wandererFeed', 'publicationFeed'].includes(block.type) ? <Box mt="md">
+                        <Label>Вид ленты</Label><Select options={[{ value: 'grid', label: 'Сетка' }, { value: 'carousel', label: 'Карусель' }]} value={{ value: block.layout ?? 'grid', label: block.layout ?? 'grid' }} onChange={v => patchBlock(i, { layout: v.value })} />
+                        <Label>Ширина карточки (180–420 px)</Label><Input type="number" min={180} max={420} value={block.cardWidth ?? 200} onChange={e => patchBlock(i, { cardWidth: Number(e.target.value) || 200 })} />
+                      </Box> : null}
+                      {block.type === 'introColumns' ? <MarketingNestedEditor kind="columns" value={block.columns ?? []} onChange={columns => patchBlock(i, { columns })} /> : null}
+                      {block.type === 'footer' ? <Box><Label>Группы ссылок</Label><MarketingNestedEditor kind="groups" value={block.groups ?? []} onChange={groups => patchBlock(i, { groups })} /><Label>Социальные сети</Label><MarketingNestedEditor kind="links" value={block.socials ?? []} onChange={socials => patchBlock(i, { socials })} /></Box> : null}
                       {meta.hasItems ? (
                         <Box mt="lg">
                           <Text fontWeight="bold">
