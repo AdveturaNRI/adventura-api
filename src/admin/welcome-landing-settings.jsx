@@ -51,7 +51,8 @@ const WelcomeLandingSettings = () => {
     <Box variant="grey20" padding="xxl">
       <Header.H2 marginBottom="lg">Приветствие и «О проекте»</Header.H2>
       <Text color="grey60" marginBottom="xl" style={{ maxWidth: 640, lineHeight: 1.5 }}>
-        Гость, который впервые открыл главную, один раз попадёт по этой ссылке. Эта же ссылка открывается
+        Каждый, кто впервые открыл главную, один раз попадёт по этой ссылке: и гость, и пользователь с аккаунтом.
+        Показ запоминается на устройстве, после смены ссылки приветствие покажется снова. Эта же ссылка открывается
         из пункта меню «О проекте». Пустое поле выключает и то, и другое.
       </Text>
       {error ? <Box marginBottom="xl"><MessageBox message={error} variant="danger" /></Box> : null}

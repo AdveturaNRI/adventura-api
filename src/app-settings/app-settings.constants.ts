@@ -11,7 +11,7 @@ export const APP_SETTING_KEYS = {
   WELCOME_LANDING_URL: 'welcome_landing_url',
 } as const;
 
-/** Link opened once for new guests and behind the «О проекте» menu item. */
+/** Link opened once per device on the home page and behind the «О проекте» menu item. */
 export type WelcomeLandingPublicConfig = {
   url: string;
 };
