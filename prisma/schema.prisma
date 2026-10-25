@@ -1188,3 +1188,24 @@ model SiteAnnouncementLike {
   @@index([userId])
   @@map("site_announcement_likes")
 }
+
+enum AdminRole {
+  SUPERADMIN
+  MANAGER
+}
+
+/// AdminJS logins. ADMIN_EMAIL / ADMIN_PASSWORD from env stay as a bootstrap superadmin.
+/// Allowed sections per role live in src/admin/admin-access.ts.
+model AdminAccount {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String?
+  role         AdminRole @default(MANAGER)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("admin_accounts")
+}

@@ -78,6 +78,7 @@ export const ADMIN_LOCALE_RU = {
     Media: 'Медиа',
     AnalyticsEvent: 'События',
     AnalyticsDailyMetric: 'Суточные метрики',
+    AdminAccount: 'Аккаунты админки',
   },
   pages: {
     grantRewards: 'Выдать награду',
@@ -273,6 +274,18 @@ export const ADMIN_LOCALE_RU = {
         metric: 'Метрика',
         value: 'Значение',
         updatedAt: 'Обновлено',
+      },
+    },
+    AdminAccount: {
+      labels: {
+        AdminAccount: 'Аккаунты админки',
+      },
+      properties: {
+        name: 'Имя',
+        role: 'Роль',
+        isActive: 'Может входить',
+        lastLoginAt: 'Последний вход',
+        password: 'Пароль',
       },
     },
   },

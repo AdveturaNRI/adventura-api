@@ -33,6 +33,11 @@ import { MarketingAnalyticsService } from '../marketing/analytics/marketing-anal
 import { PartnersService } from '../partners/partners.service';
 import { CREATIVITY_CATEGORIES } from '../authors/types/author.type';
 import { UserGameSystemsService } from '../users/user-game-systems.service';
+import { applyAdminAccess } from './admin-access';
+import {
+  authenticateAdmin,
+  buildAdminAccountResourceOptions,
+} from './admin-accounts';
 import {
   createGrantRewardsPageHandler,
   deleteUserCascade,
@@ -1164,6 +1169,9 @@ export async function setupAdmin(
         ComponentLoader: new (...args: never[]) => {
           add: (name: string, path: string) => string;
         };
+        ValidationError: new (
+          propertyErrors: Record<string, { message: string; type?: string }>,
+        ) => Error;
       }>('adminjs'),
       loadEsmModule<{ default: typeof import('@adminjs/express').default }>(
         '@adminjs/express',
@@ -1251,6 +1259,7 @@ export async function setupAdmin(
     'PartnerLogoUpload',
     resolveAdminComponent('partner-logo-upload'),
   );
+  componentLoader.override('SidebarPages', resolveAdminComponent('sidebar-pages'));
 
   const analyticsNavigation = { name: 'Аналитика', icon: 'Activity' };
   const appSettings = app.get(AppSettingsService);
@@ -1266,7 +1275,7 @@ export async function setupAdmin(
   const userGameSystems = app.get(UserGameSystemsService);
   const realtime = app.get(RealtimeEmitter);
 
-  const admin = new AdminJS({
+  const admin = new AdminJS(applyAdminAccess({
     rootPath: '/admin',
     componentLoader,
     branding: {
@@ -3005,8 +3014,15 @@ export async function setupAdmin(
           ],
         },
       },
+      {
+        resource: { model: getModelByName('AdminAccount'), client: prisma },
+        options: buildAdminAccountResourceOptions(
+          prisma,
+          adminjsModule.ValidationError,
+        ),
+      },
     ],
-  });
+  }));
 
   // @adminjs/express calls initialize() without await — race leaves UserComponents
   // empty → custom pages show componentNotFound while dashboard silently falls back.
@@ -3028,6 +3044,7 @@ export async function setupAdmin(
     'MarketingAnalyticsAdmin',
     'GrantRewards',
     'PartnerLogoUpload',
+    'SidebarPages',
   ] as const;
 
   // Drop stale entry/bundle from a previous component set (e.g. only GrantRewards).
@@ -3118,21 +3135,8 @@ export async function setupAdmin(
   const router = AdminJSExpress.buildAuthenticatedRouter(
     admin,
     {
-      authenticate: async (email: string, password: string) => {
-        const adminEmail = configService.get<string>('ADMIN_EMAIL');
-        const adminPassword = configService.get<string>('ADMIN_PASSWORD');
-
-        if (
-          email === adminEmail &&
-          password === adminPassword &&
-          adminEmail &&
-          adminPassword
-        ) {
-          return { email };
-        }
-
-        return null;
-      },
+      authenticate: (email: string, password: string) =>
+        authenticateAdmin(prisma, configService, email, password),
       cookieName: 'adventura_admin',
       cookiePassword: configService.getOrThrow<string>('ADMIN_COOKIE_SECRET'),
     },
