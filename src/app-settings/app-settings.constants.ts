@@ -9,12 +9,17 @@ export const APP_SETTING_KEYS = {
   FIREBASE_PROJECT_ID: 'firebase_project_id',
   FIREBASE_SERVICE_ACCOUNT_JSON: 'firebase_service_account_json',
   WELCOME_LANDING_URL: 'welcome_landing_url',
+  WELCOME_LANDING_SHOW_ON_FIRST_VISIT: 'welcome_landing_show_on_first_visit',
 } as const;
 
 /** Link opened once per device on the home page and behind the «О проекте» menu item. */
 export type WelcomeLandingPublicConfig = {
   url: string;
+  /** False: the link stays behind «О проекте», the home page no longer redirects to it. */
+  showOnFirstVisit: boolean;
 };
+
+export type WelcomeLandingAdminSettings = WelcomeLandingPublicConfig;
 
 export type YandexMetrikaAdminSettings = {
   counterId: string;

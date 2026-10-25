@@ -8,6 +8,7 @@ import {
   type FirebasePushAdminSettings,
   type VkAdsPixelAdminSettings,
   type VkAdsPixelPublicConfig,
+  type WelcomeLandingAdminSettings,
   type WelcomeLandingPublicConfig,
   type YandexMetrikaAdminSettings,
   type YandexMetrikaPublicConfig,
@@ -269,27 +270,57 @@ export class AppSettingsService {
     return { pixelId };
   }
 
-  async getWelcomeLandingUrl(): Promise<string> {
-    const row = await this.prisma.appSetting.findUnique({
-      where: { key: APP_SETTING_KEYS.WELCOME_LANDING_URL },
+  async getWelcomeLandingAdmin(): Promise<WelcomeLandingAdminSettings> {
+    const rows = await this.prisma.appSetting.findMany({
+      where: {
+        key: {
+          in: [
+            APP_SETTING_KEYS.WELCOME_LANDING_URL,
+            APP_SETTING_KEYS.WELCOME_LANDING_SHOW_ON_FIRST_VISIT,
+          ],
+        },
+      },
     });
-    return row?.value?.trim() ?? '';
+    const map = new Map(rows.map((row) => [row.key, row.value]));
+    return {
+      url: map.get(APP_SETTING_KEYS.WELCOME_LANDING_URL)?.trim() ?? '',
+      showOnFirstVisit: parseBool(
+        map.get(APP_SETTING_KEYS.WELCOME_LANDING_SHOW_ON_FIRST_VISIT),
+        true,
+      ),
+    };
   }
 
   async getWelcomeLandingPublic(): Promise<WelcomeLandingPublicConfig | null> {
-    const url = await this.getWelcomeLandingUrl();
-    return url ? { url } : null;
+    const settings = await this.getWelcomeLandingAdmin();
+    return settings.url ? settings : null;
   }
 
-  /** Empty string clears the link and hides «О проекте» on the client. */
-  async saveWelcomeLandingUrl(raw: string): Promise<string> {
-    const url = normalizeWelcomeLandingUrl(raw);
-    await this.prisma.appSetting.upsert({
-      where: { key: APP_SETTING_KEYS.WELCOME_LANDING_URL },
-      create: { key: APP_SETTING_KEYS.WELCOME_LANDING_URL, value: url },
-      update: { value: url },
-    });
-    return url;
+  /** Empty url clears the link and hides «О проекте» on the client. */
+  async saveWelcomeLanding(
+    input: WelcomeLandingAdminSettings,
+  ): Promise<WelcomeLandingAdminSettings> {
+    const next: WelcomeLandingAdminSettings = {
+      url: normalizeWelcomeLandingUrl(input.url),
+      showOnFirstVisit: input.showOnFirstVisit,
+    };
+    const entries = [
+      { key: APP_SETTING_KEYS.WELCOME_LANDING_URL, value: next.url },
+      {
+        key: APP_SETTING_KEYS.WELCOME_LANDING_SHOW_ON_FIRST_VISIT,
+        value: next.showOnFirstVisit ? 'true' : 'false',
+      },
+    ];
+    await this.prisma.$transaction(
+      entries.map((entry) =>
+        this.prisma.appSetting.upsert({
+          where: { key: entry.key },
+          create: entry,
+          update: { value: entry.value },
+        }),
+      ),
+    );
+    return next;
   }
 
   /** DB override for Firebase Web Push certificate public key. */

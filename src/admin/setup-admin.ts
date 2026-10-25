@@ -1404,24 +1404,31 @@ export async function setupAdmin(
         }) => {
           const method = (request.method ?? 'get').toLowerCase();
           if (method !== 'post') {
-            return { url: await appSettings.getWelcomeLandingUrl() };
+            return appSettings.getWelcomeLandingAdmin();
           }
           try {
-            const url = await appSettings.saveWelcomeLandingUrl(
-              String(request.payload?.url ?? ''),
-            );
+            const rawShow = request.payload?.showOnFirstVisit;
+            const saved = await appSettings.saveWelcomeLanding({
+              url: String(request.payload?.url ?? ''),
+              showOnFirstVisit:
+                rawShow === undefined
+                  ? (await appSettings.getWelcomeLandingAdmin()).showOnFirstVisit
+                  : ['true', '1', 'on'].includes(String(rawShow).toLowerCase()),
+            });
             return {
-              url,
+              ...saved,
               notice: {
-                message: url
-                  ? 'Ссылка сохранена, «О проекте» появится в меню'
-                  : 'Приветствие и «О проекте» выключены',
+                message: !saved.url
+                  ? 'Приветствие и «О проекте» выключены'
+                  : saved.showOnFirstVisit
+                    ? 'Сохранено: новые посетители один раз увидят лендинг'
+                    : 'Сохранено: лендинг открывается только из «О проекте»',
                 type: 'success',
               },
             };
           } catch (error) {
             return {
-              url: await appSettings.getWelcomeLandingUrl(),
+              ...(await appSettings.getWelcomeLandingAdmin()),
               notice: {
                 message: error instanceof Error ? error.message : 'Не удалось сохранить',
                 type: 'error',
