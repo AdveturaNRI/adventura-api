@@ -1,0 +1,303 @@
+{
+  "name": "Знакомство с Adventura",
+  "slug": "welcome",
+  "description": "Игры и сообщество Adventura",
+  "content": {
+    "theme": {
+      "mode": "dark",
+      "skin": "fantasy",
+      "accent": "adventura"
+    },
+    "blocks": [
+      {
+        "id": "hero",
+        "type": "hero",
+        "title": "Настоящие люди. Реальные приключения.",
+        "description": "Найди свою партию, собери команду и создавай истории вместе с Adventura.",
+        "ctaLabel": "Зарегистрироваться",
+        "ctaUrl": "/auth/register",
+        "secondaryCtaLabel": "Посмотреть игры",
+        "secondaryCtaUrl": "/games",
+        "secondaryCtaVariant": "link",
+        "imagePosition": "background"
+      },
+      {
+        "id": "intro",
+        "type": "introColumns",
+        "columns": [
+          {
+            "id": "intro-0",
+            "title": "Здесь найдётся место каждому",
+            "items": [
+              {
+                "id": "intro-0-0",
+                "title": "Я ищу игры",
+                "description": "Находи открытые наборы онлайн и рядом.",
+                "icon": "search-outline",
+                "accentColor": "#9562F5"
+              },
+              {
+                "id": "intro-0-1",
+                "title": "Я веду игры",
+                "description": "Приглашай игроков в свои приключения.",
+                "icon": "map-outline",
+                "accentColor": "#9562F5"
+              },
+              {
+                "id": "intro-0-2",
+                "title": "Я новичок",
+                "description": "Выбирай игры, где рады начинающим.",
+                "icon": "sparkles-outline",
+                "accentColor": "#9562F5"
+              }
+            ]
+          },
+          {
+            "id": "intro-1",
+            "title": "Как найти свою первую партию",
+            "items": [
+              {
+                "id": "intro-1-0",
+                "title": "Открой каталог",
+                "description": "Посмотри актуальные встречи.",
+                "icon": "albums-outline",
+                "accentColor": "#157AFE"
+              },
+              {
+                "id": "intro-1-1",
+                "title": "Выбери подходящую игру",
+                "description": "Уточни систему, время и формат.",
+                "icon": "dice-outline",
+                "accentColor": "#157AFE"
+              },
+              {
+                "id": "intro-1-2",
+                "title": "Расскажи о себе",
+                "description": "Заполни анкету и отправь заявку.",
+                "icon": "person-outline",
+                "accentColor": "#157AFE"
+              },
+              {
+                "id": "intro-1-3",
+                "title": "Договорись о встрече",
+                "description": "Обсуди детали с мастером в чате.",
+                "icon": "chatbubble-outline",
+                "accentColor": "#157AFE"
+              }
+            ]
+          },
+          {
+            "id": "intro-2",
+            "title": "Хочешь вести приключения?",
+            "items": [
+              {
+                "id": "intro-2-0",
+                "title": "Опиши свою игру",
+                "description": "Расскажи о мире и формате встречи.",
+                "icon": "create-outline",
+                "accentColor": "#E85D9A"
+              },
+              {
+                "id": "intro-2-1",
+                "title": "Открой набор",
+                "description": "Укажи время и свободные места.",
+                "icon": "megaphone-outline",
+                "accentColor": "#E85D9A"
+              },
+              {
+                "id": "intro-2-2",
+                "title": "Рассмотри заявки",
+                "description": "Познакомься с будущими игроками.",
+                "icon": "reader-outline",
+                "accentColor": "#E85D9A"
+              },
+              {
+                "id": "intro-2-3",
+                "title": "Собери партию",
+                "description": "Подтверди состав и готовь приключение.",
+                "icon": "people-outline",
+                "accentColor": "#E85D9A"
+              }
+            ]
+          },
+          {
+            "id": "intro-3",
+            "title": "Знакомься с теми, с кем хочется играть",
+            "items": [
+              {
+                "id": "intro-3-0",
+                "title": "Странники",
+                "description": "Находи людей с общими интересами.",
+                "icon": "compass-outline",
+                "accentColor": "#30B0C7"
+              },
+              {
+                "id": "intro-3-1",
+                "title": "Твой профиль",
+                "description": "Расскажи о себе и любимых системах.",
+                "icon": "person-circle-outline",
+                "accentColor": "#30B0C7"
+              },
+              {
+                "id": "intro-3-2",
+                "title": "Своя индивидуальность",
+                "description": "Оформи карточку в своём стиле.",
+                "icon": "color-palette-outline",
+                "accentColor": "#30B0C7"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "games",
+        "type": "gameFeed",
+        "layout": "carousel",
+        "cardWidth": 220,
+        "limit": 12,
+        "title": "Найди своё следующее приключение",
+        "ctaLabel": "Все игры",
+        "ctaUrl": "/games"
+      },
+      {
+        "id": "wanderers",
+        "type": "wandererFeed",
+        "layout": "carousel",
+        "limit": 12,
+        "title": "Странники, с которыми можно отправиться в новое приключение"
+      },
+      {
+        "id": "clubs",
+        "type": "clubFeed",
+        "layout": "carousel",
+        "limit": 12,
+        "title": "Где играть офлайн",
+        "description": "Исследуй клубы и игровые пространства. Каталог и карта помогут найти место для встречи",
+        "ctaLabel": "Все клубы",
+        "ctaUrl": "/clubs"
+      },
+      {
+        "id": "publications",
+        "type": "publicationFeed",
+        "layout": "carousel",
+        "limit": 12,
+        "title": "Миры, истории и идеи нашего сообщества",
+        "description": "Делись творчеством, находи вдохновение и знакомься с работами других участников Adventura",
+        "ctaLabel": "Все публикации",
+        "ctaUrl": "/authors"
+      },
+      {
+        "id": "workshop",
+        "type": "appShowcase",
+        "title": "Кабинет мастера",
+        "description": "Управляй своими играми, рассматривай заявки и собирай партию.",
+        "imageUrl": "",
+        "ctaLabel": "Зарегистрироваться",
+        "ctaUrl": "/auth/register"
+      },
+      {
+        "id": "tools",
+        "type": "features",
+        "title": "Всё для приключения",
+        "columns": 3,
+        "items": [
+          {
+            "title": "Чаты и звонки",
+            "description": "Обсуждай игру и общайся с партией.",
+            "meta": "chat"
+          },
+          {
+            "title": "Дайсы и генераторы",
+            "description": "Бросай кости и находи идеи для приключений.",
+            "meta": "dice"
+          },
+          {
+            "title": "Музыкальная библиотека",
+            "description": "Подбирай музыку под настроение встречи.",
+            "meta": "planet"
+          }
+        ]
+      },
+      {
+        "id": "faq",
+        "type": "faq",
+        "title": "Частые вопросы",
+        "items": [
+          {
+            "title": "Можно ли начать без опыта?",
+            "description": "Да. Ищи игры, в которых мастер рад новичкам."
+          },
+          {
+            "title": "Регистрация бесплатна?",
+            "description": "Да. Стоимость конкретной игры указывает мастер."
+          }
+        ]
+      },
+      {
+        "id": "final-cta",
+        "type": "cta",
+        "title": "Настольные ролевые игры начинаются здесь",
+        "ctaLabel": "Зарегистрироваться",
+        "ctaUrl": "/auth/register",
+        "secondaryCtaLabel": "Посмотреть игры",
+        "secondaryCtaUrl": "/games"
+      },
+      {
+        "id": "footer",
+        "type": "footer",
+        "title": "Adventura",
+        "groups": [
+          {
+            "title": "Каталог",
+            "links": [
+              {
+                "label": "Игры",
+                "url": "/games"
+              },
+              {
+                "label": "Клубы",
+                "url": "/clubs"
+              },
+              {
+                "label": "Авторы",
+                "url": "/authors"
+              }
+            ]
+          },
+          {
+            "title": "Контакты",
+            "links": [
+              {
+                "label": "Поддержка",
+                "url": "mailto:support@adventu.ru"
+              },
+              {
+                "label": "Сотрудничество",
+                "url": "mailto:partners@adventu.ru"
+              }
+            ]
+          }
+        ],
+        "socials": [
+          {
+            "label": "Telegram",
+            "url": "https://t.me/adventura"
+          },
+          {
+            "label": "ВКонтакте",
+            "url": "https://vk.com/adventura"
+          },
+          {
+            "label": "TikTok",
+            "url": "https://www.tiktok.com/@adventura"
+          }
+        ],
+        "legalText": "© Adventura"
+      }
+    ]
+  },
+  "seo": {
+    "title": "Adventura — настольные ролевые игры",
+    "description": "Найди игры и единомышленников."
+  }
+}
