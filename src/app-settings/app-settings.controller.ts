@@ -9,11 +9,12 @@ export class AppSettingsController {
   /** Public web client config (analytics ids, OAuth client ids). No auth. */
   @Get('public')
   async getPublic() {
-    const [yandexMetrika, vkAdsPixel] = await Promise.all([
+    const [yandexMetrika, vkAdsPixel, welcomeLanding] = await Promise.all([
       this.appSettings.getYandexMetrikaPublic(),
       this.appSettings.getVkAdsPixelPublic(),
+      this.appSettings.getWelcomeLandingPublic(),
     ]);
     const oauth = this.appSettings.getOauthPublic();
-    return { yandexMetrika, vkAdsPixel, oauth };
+    return { yandexMetrika, vkAdsPixel, welcomeLanding, oauth };
   }
 }

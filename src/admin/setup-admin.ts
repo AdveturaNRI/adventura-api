@@ -1223,6 +1223,10 @@ export async function setupAdmin(
     'VkAdsPixelSettings',
     resolveAdminComponent('vk-ads-pixel-settings'),
   );
+  const welcomeLandingComponent = componentLoader.add(
+    'WelcomeLandingSettings',
+    resolveAdminComponent('welcome-landing-settings'),
+  );
   const notificationSoundsComponent = componentLoader.add(
     'NotificationSoundsAdmin',
     resolveAdminComponent('notification-sounds-admin'),
@@ -1383,6 +1387,41 @@ export async function setupAdmin(
           } catch (error) {
             return {
               ...(await appSettings.getVkAdsPixelAdmin()),
+              notice: {
+                message: error instanceof Error ? error.message : 'Не удалось сохранить',
+                type: 'error',
+              },
+            };
+          }
+        },
+      },
+      welcomeLanding: {
+        icon: 'Home',
+        component: welcomeLandingComponent,
+        handler: async (request: {
+          method?: string;
+          payload?: Record<string, unknown>;
+        }) => {
+          const method = (request.method ?? 'get').toLowerCase();
+          if (method !== 'post') {
+            return { url: await appSettings.getWelcomeLandingUrl() };
+          }
+          try {
+            const url = await appSettings.saveWelcomeLandingUrl(
+              String(request.payload?.url ?? ''),
+            );
+            return {
+              url,
+              notice: {
+                message: url
+                  ? 'Ссылка сохранена, «О проекте» появится в меню'
+                  : 'Приветствие и «О проекте» выключены',
+                type: 'success',
+              },
+            };
+          } catch (error) {
+            return {
+              url: await appSettings.getWelcomeLandingUrl(),
               notice: {
                 message: error instanceof Error ? error.message : 'Не удалось сохранить',
                 type: 'error',
@@ -3035,6 +3074,7 @@ export async function setupAdmin(
     'AnalyticsDashboard',
     'MetrikaSettings',
     'VkAdsPixelSettings',
+    'WelcomeLandingSettings',
     'NotificationSoundsAdmin',
     'BroadcastsAdmin',
     'SiteAnnouncementsAdmin',

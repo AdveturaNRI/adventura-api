@@ -8,7 +8,13 @@ export const APP_SETTING_KEYS = {
   FIREBASE_WEB_VAPID_KEY: 'firebase_web_vapid_key',
   FIREBASE_PROJECT_ID: 'firebase_project_id',
   FIREBASE_SERVICE_ACCOUNT_JSON: 'firebase_service_account_json',
+  WELCOME_LANDING_URL: 'welcome_landing_url',
 } as const;
+
+/** Link opened once for new guests and behind the «О проекте» menu item. */
+export type WelcomeLandingPublicConfig = {
+  url: string;
+};
 
 export type YandexMetrikaAdminSettings = {
   counterId: string;

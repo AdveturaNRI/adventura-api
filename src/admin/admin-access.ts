@@ -56,6 +56,7 @@ export const ADMIN_PAGE_SECTIONS: Record<string, AdminSection> = {
   marketingLandings: 'marketing',
   marketingCampaigns: 'marketing',
   marketingAnalytics: 'marketing',
+  welcomeLanding: 'marketing',
   broadcasts: 'communications',
   siteAnnouncements: 'communications',
   pushSettings: 'communications',

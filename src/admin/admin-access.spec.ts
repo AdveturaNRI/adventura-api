@@ -38,6 +38,7 @@ describe('admin access', () => {
         'marketingLandings',
         'marketingCampaigns',
         'marketingAnalytics',
+        'welcomeLanding',
       ]),
     );
     expect(manager.allowedPages).not.toContain('broadcasts');

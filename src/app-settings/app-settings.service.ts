@@ -8,6 +8,7 @@ import {
   type FirebasePushAdminSettings,
   type VkAdsPixelAdminSettings,
   type VkAdsPixelPublicConfig,
+  type WelcomeLandingPublicConfig,
   type YandexMetrikaAdminSettings,
   type YandexMetrikaPublicConfig,
 } from './app-settings.constants';
@@ -35,6 +36,19 @@ function normalizeVkAdsPixelId(raw: string): string {
   if (!trimmed) return '';
   if (!/^\d{1,20}$/.test(trimmed)) {
     throw new Error('ID пикселя VK Ads должен состоять только из цифр');
+  }
+  return trimmed;
+}
+
+function normalizeWelcomeLandingUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  if (trimmed.length > 2048) {
+    throw new Error('Ссылка слишком длинная');
+  }
+  const isInternal = trimmed.startsWith('/') && !trimmed.startsWith('//');
+  if (!isInternal && !/^https:\/\/[^\s]+$/i.test(trimmed)) {
+    throw new Error('Нужна ссылка вида /l/welcome или https://…');
   }
   return trimmed;
 }
@@ -253,6 +267,29 @@ export class AppSettingsService {
     });
 
     return { pixelId };
+  }
+
+  async getWelcomeLandingUrl(): Promise<string> {
+    const row = await this.prisma.appSetting.findUnique({
+      where: { key: APP_SETTING_KEYS.WELCOME_LANDING_URL },
+    });
+    return row?.value?.trim() ?? '';
+  }
+
+  async getWelcomeLandingPublic(): Promise<WelcomeLandingPublicConfig | null> {
+    const url = await this.getWelcomeLandingUrl();
+    return url ? { url } : null;
+  }
+
+  /** Empty string clears the link and hides «О проекте» on the client. */
+  async saveWelcomeLandingUrl(raw: string): Promise<string> {
+    const url = normalizeWelcomeLandingUrl(raw);
+    await this.prisma.appSetting.upsert({
+      where: { key: APP_SETTING_KEYS.WELCOME_LANDING_URL },
+      create: { key: APP_SETTING_KEYS.WELCOME_LANDING_URL, value: url },
+      update: { value: url },
+    });
+    return url;
   }
 
   /** DB override for Firebase Web Push certificate public key. */
