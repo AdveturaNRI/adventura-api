@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import {
@@ -11,17 +11,31 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { Server, Socket } from 'socket.io';
+import { Namespace, Server, Socket } from 'socket.io';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { REALTIME_EVENTS, type TypingUpdatePayload } from './realtime.events';
-import { RealtimeEmitter } from './realtime.emitter';
+import { PRESENCE_ACTIVE_TTL_MS, RealtimeEmitter } from './realtime.emitter';
 
 type JwtPayload = {
   sub: string;
   email: string;
   nickname: string;
 };
+
+type SocketPresence = {
+  /** Client sends presence:active / presence:idle; otherwise the socket is active while connected. */
+  reportsActivity: boolean;
+  active: boolean;
+  lastPingAt: number;
+  lastSeenWriteAt: number;
+};
+
+const PRESENCE_SWEEP_MS = 30_000;
+/** lastSeenAt is written at most this often while the user stays active. */
+const LAST_SEEN_WRITE_MS = 60_000;
+/** How far back a client may date its last interaction when going idle. */
+const PRESENCE_IDLE_BACKDATE_MAX_MS = 10 * 60_000;
 
 @WebSocketGateway({
   namespace: '/realtime',
@@ -31,12 +45,14 @@ type JwtPayload = {
   },
 })
 export class RealtimeGateway
-  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy
 {
   private readonly logger = new Logger(RealtimeGateway.name);
+  private presenceSweep: ReturnType<typeof setInterval> | null = null;
 
+  /** Namespaced gateway: Nest injects the `/realtime` namespace, not the root server. */
   @WebSocketServer()
-  server!: Server;
+  server!: Namespace;
 
   constructor(
     private readonly jwtService: JwtService,
@@ -47,6 +63,18 @@ export class RealtimeGateway
 
   afterInit(server: Server) {
     this.emitter.setServer(server);
+    this.presenceSweep = setInterval(() => {
+      void this.sweepPresence().catch((error) =>
+        this.logger.warn(
+          `Presence sweep failed: ${error instanceof Error ? error.message : 'unknown'}`,
+        ),
+      );
+    }, PRESENCE_SWEEP_MS);
+    this.presenceSweep.unref?.();
+  }
+
+  onModuleDestroy() {
+    if (this.presenceSweep) clearInterval(this.presenceSweep);
   }
 
   async handleConnection(client: Socket) {
@@ -79,15 +107,18 @@ export class RealtimeGateway
           : 'Участник');
       await client.join(this.emitter.userRoom(user.id));
 
-      const becameOnline = await this.emitter.markOnline(user.id, client.id);
-      const now = new Date();
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { lastSeenAt: now },
-      });
-
-      if (becameOnline) {
-        await this.broadcastPresence(user.id, true, now);
+      // New clients report activity themselves via presence:active / presence:idle.
+      // Older app builds don't, so their open socket counts as «в сети» like before.
+      const presence: SocketPresence = {
+        reportsActivity: client.handshake.auth?.presence === true,
+        active: false,
+        lastPingAt: 0,
+        lastSeenWriteAt: 0,
+      };
+      client.data.presence = presence;
+      // The client sees `connect` before this async handler finishes, so its first ping may already be queued.
+      if (!presence.reportsActivity || client.data.pendingActive === true) {
+        await this.markActive(client, user.id);
       }
 
       const [chats, notifications] = await Promise.all([
@@ -111,19 +142,91 @@ export class RealtimeGateway
     if (!userId) {
       return;
     }
+    await this.markIdle(client, userId, new Date());
+    this.logger.debug(`WS disconnected user:${userId}`);
+  }
 
-    const becameOffline = await this.emitter.markOffline(userId, client.id);
+  @SubscribeMessage(REALTIME_EVENTS.PRESENCE_ACTIVE)
+  async handlePresenceActive(@ConnectedSocket() client: Socket) {
+    const userId = client.data?.userId as string | undefined;
+    const presence = client.data?.presence as SocketPresence | undefined;
+    if (!userId || !presence) {
+      client.data.pendingActive = true;
+      return;
+    }
+    presence.reportsActivity = true;
+    await this.markActive(client, userId);
+  }
+
+  @SubscribeMessage(REALTIME_EVENTS.PRESENCE_IDLE)
+  async handlePresenceIdle(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { lastActiveAt?: unknown },
+  ) {
+    const userId = client.data?.userId as string | undefined;
+    const presence = client.data?.presence as SocketPresence | undefined;
+    if (!userId || !presence) {
+      client.data.pendingActive = false;
+      return;
+    }
+    presence.reportsActivity = true;
+    const now = Date.now();
+    const reported = typeof body?.lastActiveAt === 'number' ? body.lastActiveAt : now;
+    const lastActiveAt = Math.min(now, Math.max(reported, now - PRESENCE_IDLE_BACKDATE_MAX_MS));
+    await this.markIdle(client, userId, new Date(lastActiveAt));
+  }
+
+  private async markActive(client: Socket, userId: string) {
+    const presence = client.data.presence as SocketPresence;
+    const now = Date.now();
+    presence.active = true;
+    presence.lastPingAt = now;
+    const becameOnline = await this.emitter.touchActive(userId, client.id);
+    if (becameOnline || now - presence.lastSeenWriteAt >= LAST_SEEN_WRITE_MS) {
+      presence.lastSeenWriteAt = now;
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { lastSeenAt: new Date(now) },
+      });
+    }
+    if (becameOnline) {
+      await this.broadcastPresence(userId, true, new Date(now));
+    }
+  }
+
+  private async markIdle(client: Socket, userId: string, lastActiveAt: Date) {
+    const presence = client.data?.presence as SocketPresence | undefined;
+    if (!presence?.active) {
+      return;
+    }
+    presence.active = false;
+    const becameOffline = await this.emitter.markInactive(userId, client.id);
     if (!becameOffline) {
       return;
     }
-
-    const now = new Date();
     await this.prisma.user.update({
       where: { id: userId },
-      data: { lastSeenAt: now },
+      data: { lastSeenAt: lastActiveAt },
     });
-    await this.broadcastPresence(userId, false, now);
-    this.logger.debug(`WS disconnected user:${userId}`);
+    await this.broadcastPresence(userId, false, lastActiveAt);
+  }
+
+  /**
+   * Keeps sockets of older app builds alive in the presence store, and turns off
+   * sockets whose client stopped pinging (frozen tab, suspended app) so peers see it.
+   */
+  private async sweepPresence() {
+    const now = Date.now();
+    for (const client of this.server.sockets.values()) {
+      const userId = client.data?.userId as string | undefined;
+      const presence = client.data?.presence as SocketPresence | undefined;
+      if (!userId || !presence?.active) continue;
+      if (!presence.reportsActivity) {
+        await this.markActive(client, userId);
+      } else if (now - presence.lastPingAt >= PRESENCE_ACTIVE_TTL_MS) {
+        await this.markIdle(client, userId, new Date(presence.lastPingAt));
+      }
+    }
   }
 
   @SubscribeMessage(REALTIME_EVENTS.TYPING_UPDATE)

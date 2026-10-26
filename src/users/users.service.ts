@@ -1495,7 +1495,7 @@ export class UsersService {
       badges: perks.visibleBadges,
       avatarFrameId: perks.avatarFrameId,
       questionnaireAuraId: perks.questionnaireAuraId,
-      online: await this.realtime.isPresent(user.id, user.lastSeenAt),
+      online: await this.realtime.isPresent(user.id),
       lastSeenAt: user.lastSeenAt?.toISOString() ?? null,
     };
   }

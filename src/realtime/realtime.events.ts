@@ -9,6 +9,10 @@ export const REALTIME_EVENTS = {
   ANNOUNCEMENT_PUBLISHED: 'announcement:published',
   UNREAD_SYNC: 'unread:sync',
   PRESENCE_UPDATE: 'presence:update',
+  /** Client → server: the tab is visible and the user did something recently. Repeats every 30 s. */
+  PRESENCE_ACTIVE: 'presence:active',
+  /** Client → server: the tab went to background or the user stopped interacting. */
+  PRESENCE_IDLE: 'presence:idle',
   TYPING_UPDATE: 'typing:update',
   CALL_INVITE: 'call:invite',
   CALL_ACCEPTED: 'call:accepted',

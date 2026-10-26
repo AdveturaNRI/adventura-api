@@ -14,12 +14,15 @@ import {
   type UnreadSyncPayload,
 } from './realtime.events';
 
+/** A `presence:active` ping keeps the socket «в сети» this long; clients repeat it every 30 s. */
+export const PRESENCE_ACTIVE_TTL_MS = 90_000;
+
 @Injectable()
 export class RealtimeEmitter implements OnModuleDestroy {
   private readonly logger = new Logger(RealtimeEmitter.name);
   private server: Server | null = null;
-  /** Fallback when REDIS_URL is unset (single-node / local). */
-  private readonly onlineSockets = new Map<string, Set<string>>();
+  /** Fallback when REDIS_URL is unset (single-node / local): userId → socketId → active until (ms). */
+  private readonly onlineSockets = new Map<string, Map<string, number>>();
   private redis: RedisClientType | null = null;
 
   setServer(server: Server) {
@@ -43,93 +46,98 @@ export class RealtimeEmitter implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Sorted set per user: member = socketId, score = "active until" (ms). An entry that
+   * is not refreshed simply expires, so sockets of a crashed or redeployed replica
+   * stop counting within PRESENCE_ACTIVE_TTL_MS instead of lingering for a day.
+   */
   private presenceKey(userId: string) {
-    return `rt:online:${userId}`;
-  }
-
-  /** @returns true if this was the first socket for the user (became online). */
-  async markOnline(userId: string, socketId: string): Promise<boolean> {
-    if (this.redis) {
-      const key = this.presenceKey(userId);
-      const before = await this.redis.sCard(key);
-      await this.redis.sAdd(key, socketId);
-      // Safety TTL if disconnect hook is missed (crash / kill -9).
-      await this.redis.expire(key, 60 * 60 * 24);
-      return before === 0;
-    }
-
-    let sockets = this.onlineSockets.get(userId);
-    if (!sockets) {
-      sockets = new Set();
-      this.onlineSockets.set(userId, sockets);
-    }
-    const wasOffline = sockets.size === 0;
-    sockets.add(socketId);
-    return wasOffline;
-  }
-
-  /** @returns true if the user has no sockets left (became offline). */
-  async markOffline(userId: string, socketId: string): Promise<boolean> {
-    if (this.redis) {
-      const key = this.presenceKey(userId);
-      await this.redis.sRem(key, socketId);
-      const left = await this.redis.sCard(key);
-      if (left === 0) {
-        await this.redis.del(key);
-        return true;
-      }
-      return false;
-    }
-
-    const sockets = this.onlineSockets.get(userId);
-    if (!sockets) {
-      return true;
-    }
-    sockets.delete(socketId);
-    if (sockets.size === 0) {
-      this.onlineSockets.delete(userId);
-      return true;
-    }
-    return false;
-  }
-
-  async isOnline(userId: string): Promise<boolean> {
-    if (this.redis) {
-      return (await this.redis.sCard(this.presenceKey(userId))) > 0;
-    }
-    return (this.onlineSockets.get(userId)?.size ?? 0) > 0;
+    return `rt:presence:${userId}`;
   }
 
   /**
-   * Online for chat UI: active websocket, or recent HTTP activity from any app section.
-   * Keeps "в сети" accurate when the user browses games/profile without opening chats.
+   * Marks the socket active until now + ttl.
+   * @returns true if the user had no active sockets before (became online).
    */
-  async isPresent(userId: string, lastSeenAt?: Date | null): Promise<boolean> {
-    if (await this.isOnline(userId)) {
-      return true;
+  async touchActive(userId: string, socketId: string): Promise<boolean> {
+    const before = await this.activeSocketCount(userId);
+    const until = Date.now() + PRESENCE_ACTIVE_TTL_MS;
+    if (this.redis) {
+      const key = this.presenceKey(userId);
+      await this.redis.zAdd(key, { score: until, value: socketId });
+      await this.redis.pExpire(key, PRESENCE_ACTIVE_TTL_MS * 2);
+    } else {
+      let sockets = this.onlineSockets.get(userId);
+      if (!sockets) {
+        sockets = new Map();
+        this.onlineSockets.set(userId, sockets);
+      }
+      sockets.set(socketId, until);
     }
-    if (!lastSeenAt) {
-      return false;
+    return before === 0;
+  }
+
+  /**
+   * Drops the socket from presence (went idle or disconnected). Call it only for a socket
+   * that was active: its entry may have already expired on its own.
+   * @returns true if the user has no active sockets left (became offline).
+   */
+  async markInactive(userId: string, socketId: string): Promise<boolean> {
+    if (this.redis) {
+      await this.redis.zRem(this.presenceKey(userId), socketId);
+    } else {
+      const sockets = this.onlineSockets.get(userId);
+      sockets?.delete(socketId);
+      if (sockets?.size === 0) this.onlineSockets.delete(userId);
     }
-    return Date.now() - lastSeenAt.getTime() < 90_000;
+    return (await this.activeSocketCount(userId)) === 0;
+  }
+
+  private async activeSocketCount(userId: string): Promise<number> {
+    const now = Date.now();
+    if (this.redis) {
+      const key = this.presenceKey(userId);
+      await this.redis.zRemRangeByScore(key, '-inf', now);
+      return this.redis.zCard(key);
+    }
+    const sockets = this.onlineSockets.get(userId);
+    if (!sockets) return 0;
+    for (const [socketId, until] of sockets) {
+      if (until <= now) sockets.delete(socketId);
+    }
+    if (sockets.size === 0) this.onlineSockets.delete(userId);
+    return sockets.size;
+  }
+
+  /** «В сети» in chats and wanderer cards: an open tab the user is actually using. */
+  async isPresent(userId: string): Promise<boolean> {
+    return (await this.activeSocketCount(userId)) > 0;
   }
 
   /** Unique users with at least one active socket (local-only without Redis). */
   onlineCount(): number {
-    return this.onlineSockets.size;
+    const now = Date.now();
+    let count = 0;
+    for (const sockets of this.onlineSockets.values()) {
+      if ([...sockets.values()].some((until) => until > now)) count += 1;
+    }
+    return count;
   }
 
-  /** Cluster-wide WS online users (Redis keys) or local Map size. */
+  /** Cluster-wide active users (Redis keys) or local Map size. */
   async countOnlineUsers(): Promise<number> {
     if (!this.redis) {
-      return this.onlineSockets.size;
+      return this.onlineCount();
     }
+    const now = Date.now();
     let count = 0;
-    for await (const _key of this.redis.scanIterator({
-      MATCH: 'rt:online:*',
+    for await (const keys of this.redis.scanIterator({
+      MATCH: 'rt:presence:*',
       COUNT: 200,
     })) {
-      count += 1;
+      for (const key of Array.isArray(keys) ? keys : [keys]) {
+        if ((await this.redis.zCount(key, now, '+inf')) > 0) count += 1;
+      }
     }
     return count;
   }
