@@ -25,6 +25,8 @@ describe('admin access', () => {
     expect(canAccessSection(manager, 'marketing')).toBe(true);
     expect(canAccessSection(manager, 'sessions')).toBe(false);
     expect(canAccessSection(manager, 'communications')).toBe(false);
+    expect(canAccessSection(manager, 'news')).toBe(true);
+    expect(canAccessSection(partner, 'news')).toBe(false);
     expect(canAccessSection(manager, 'access')).toBe(false);
     expect(canAccessSection(manager, undefined)).toBe(false);
   });
@@ -66,9 +68,11 @@ describe('admin access', () => {
         'marketingCampaigns',
         'marketingAnalytics',
         'welcomeLanding',
+        'siteAnnouncements',
       ]),
     );
     expect(manager.allowedPages).not.toContain('broadcasts');
+    expect(manager.allowedPages).not.toContain('pushSettings');
     expect(manager.allowedPages).not.toContain('metrikaSettings');
     expect(manager.title).toBe('m@a.ru · Менеджер');
   });

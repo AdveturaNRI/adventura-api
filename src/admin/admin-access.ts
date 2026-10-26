@@ -14,6 +14,7 @@ export const ADMIN_SECTIONS = [
   'integrations',
   'access',
   'partnerNews',
+  'news',
 ] as const;
 
 export type AdminSection = (typeof ADMIN_SECTIONS)[number];
@@ -29,6 +30,7 @@ export const ADMIN_ROLE_SECTIONS: Record<AdminRole, readonly AdminSection[]> = {
     'publications',
     'media',
     'partnerNews',
+    'news',
   ],
   PARTNER: ['partnerNews'],
 };
@@ -65,7 +67,7 @@ export const ADMIN_PAGE_SECTIONS: Record<string, AdminSection> = {
   marketingAnalytics: 'marketing',
   welcomeLanding: 'marketing',
   broadcasts: 'communications',
-  siteAnnouncements: 'communications',
+  siteAnnouncements: 'news',
   pushSettings: 'communications',
   metrikaSettings: 'integrations',
   vkAdsPixelSettings: 'integrations',
