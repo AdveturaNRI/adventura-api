@@ -383,6 +383,13 @@ const AnalyticsDashboard = () => {
         const response = await api.getDashboard();
         const payload = response.data ?? response;
         if (cancelled) return;
+        if (payload?.forbidden) {
+          clearInterval(timer);
+          setError(
+            'Сводка недоступна для вашей роли. Разделы, с которыми вы работаете, — в меню слева.',
+          );
+          return;
+        }
         setData(payload);
         setError(null);
         if (!seeded) {

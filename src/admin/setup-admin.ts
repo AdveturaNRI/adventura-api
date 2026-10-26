@@ -30,6 +30,7 @@ import {
 } from '../users/utils/questionnaire-completion.util';
 import { MarketingCampaignsService } from '../marketing/campaigns/marketing-campaigns.service';
 import { MarketingAnalyticsService } from '../marketing/analytics/marketing-analytics.service';
+import { PartnerPostsService } from '../partners/partner-posts.service';
 import { PartnersService } from '../partners/partners.service';
 import { CREATIVITY_CATEGORIES } from '../authors/types/author.type';
 import { UserGameSystemsService } from '../users/user-game-systems.service';
@@ -38,6 +39,7 @@ import {
   authenticateAdmin,
   buildAdminAccountResourceOptions,
 } from './admin-accounts';
+import { buildPartnerPostResourceOptions } from './partner-posts-admin';
 import {
   createGrantRewardsPageHandler,
   deleteUserCascade,
@@ -1276,6 +1278,7 @@ export async function setupAdmin(
   const marketingAnalytics = app.get(MarketingAnalyticsService);
   const rewards = app.get(RewardsService);
   const partners = app.get(PartnersService);
+  const partnerPosts = app.get(PartnerPostsService);
   const userGameSystems = app.get(UserGameSystemsService);
   const realtime = app.get(RealtimeEmitter);
 
@@ -3059,6 +3062,14 @@ export async function setupAdmin(
             'size',
           ],
         },
+      },
+      {
+        resource: { model: getModelByName('PartnerPost'), client: prisma },
+        options: buildPartnerPostResourceOptions(
+          partnerPosts,
+          adminjsModule.ValidationError,
+          partnerLogoUploadComponent,
+        ),
       },
       {
         resource: { model: getModelByName('AdminAccount'), client: prisma },

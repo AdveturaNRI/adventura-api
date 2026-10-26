@@ -60,6 +60,7 @@ export async function authenticateAdmin(
     where: { email: email.trim().toLowerCase() },
   });
   if (!account?.isActive) return null;
+  if (account.role === 'PARTNER' && !account.partnerId) return null;
   if (!(await bcrypt.compare(password, account.passwordHash))) return null;
 
   await prisma.adminAccount.update({
@@ -70,6 +71,7 @@ export async function authenticateAdmin(
     email: account.email,
     role: account.role,
     accountId: account.id,
+    partnerId: account.partnerId,
     name: account.name,
   });
 }
@@ -128,10 +130,28 @@ export function buildAdminAccountResourceOptions(
       }
 
       const previous = context.record?.params;
+      const role = payload.role ?? previous?.role;
+      const partnerId = payload.partnerId ?? previous?.partnerId;
+      if (role === 'PARTNER' && !partnerId) {
+        throw new ValidationError({
+          partnerId: {
+            message: 'Выбери партнёра, чьи новости ведёт этот логин',
+          },
+        });
+      }
+      if (
+        payload.partnerId === '' ||
+        (role !== 'PARTNER' && payload.partnerId)
+      ) {
+        payload.partnerId = null;
+      }
+
       if (previous) {
         context.revokeAdminSessions =
           Boolean(payload.passwordHash) ||
           (payload.role !== undefined && payload.role !== previous.role) ||
+          (payload.partnerId !== undefined &&
+            (payload.partnerId || null) !== (previous.partnerId || null)) ||
           (payload.isActive !== undefined &&
             isTruthyParam(payload.isActive) !==
               isTruthyParam(previous.isActive));
@@ -161,20 +181,39 @@ export function buildAdminAccountResourceOptions(
     navigation: { name: 'Доступ', icon: 'Lock' },
     titleProperty: 'email',
     sort: { sortBy: 'createdAt', direction: 'desc' },
-    listProperties: ['email', 'name', 'role', 'isActive', 'lastLoginAt'],
-    filterProperties: ['email', 'name', 'role', 'isActive'],
+    listProperties: [
+      'email',
+      'name',
+      'role',
+      'partnerId',
+      'isActive',
+      'lastLoginAt',
+    ],
+    filterProperties: ['email', 'name', 'role', 'partnerId', 'isActive'],
     showProperties: [
       'id',
       'email',
       'name',
       'role',
+      'partnerId',
       'isActive',
       'lastLoginAt',
       'createdAt',
       'updatedAt',
     ],
-    editProperties: ['email', 'name', 'role', 'isActive', 'password'],
+    editProperties: [
+      'email',
+      'name',
+      'role',
+      'partnerId',
+      'isActive',
+      'password',
+    ],
     properties: {
+      partnerId: {
+        description:
+          'Только для роли «Партнёр»: чьи новости публикует этот логин.',
+      },
       passwordHash: { isVisible: false },
       password: {
         type: 'password',

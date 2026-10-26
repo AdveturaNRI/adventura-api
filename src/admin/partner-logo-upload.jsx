@@ -12,10 +12,21 @@ const readFileAsDataUrl = (file) =>
     reader.readAsDataURL(file);
   });
 
+/** Defaults fit the partner logo; other resources pass overrides via `property.custom`. */
+const DEFAULTS = {
+  resourceId: 'Partner',
+  actionName: 'uploadLogo',
+  label: 'URL логотипа',
+  previewAlt: 'Логотип партнёра',
+  previewFit: 'contain',
+  saveFirstHint: 'Сначала сохрани партнёра — потом здесь появится загрузка файла.',
+};
+
 const PartnerLogoUpload = (props) => {
   const { property, record, onChange, where } = props;
   const addNotice = useNotice();
   const [busy, setBusy] = useState(false);
+  const options = { ...DEFAULTS, ...(property.custom || {}) };
 
   const path = property.path;
   const value = record?.params?.[path] ?? '';
@@ -28,9 +39,9 @@ const PartnerLogoUpload = (props) => {
     try {
       const base64 = await readFileAsDataUrl(file);
       const { data } = await api.recordAction({
-        resourceId: 'Partner',
+        resourceId: options.resourceId,
         recordId,
-        actionName: 'uploadLogo',
+        actionName: options.actionName,
         method: 'post',
         data: {
           fileBase64: base64,
@@ -42,13 +53,13 @@ const PartnerLogoUpload = (props) => {
       if (data?.notice) {
         addNotice(data.notice);
       }
-      const nextUrl = data?.record?.params?.logoUrl ?? data?.logoUrl;
+      const nextUrl = data?.record?.params?.[path] ?? data?.url ?? data?.logoUrl;
       if (nextUrl) {
         onChange(path, nextUrl);
       }
     } catch (error) {
       addNotice({
-        message: error instanceof Error ? error.message : 'Не удалось загрузить логотип',
+        message: error instanceof Error ? error.message : 'Не удалось загрузить файл',
         type: 'error',
       });
     } finally {
@@ -58,13 +69,13 @@ const PartnerLogoUpload = (props) => {
 
   return (
     <FormGroup>
-      <Label>{property.label || 'URL логотипа'}</Label>
+      <Label>{property.label || options.label}</Label>
       {value ? (
         <Box mb="default" p="default" variant="grey20" style={{ borderRadius: 8, maxWidth: 280 }}>
           <img
             src={value}
-            alt="Логотип партнёра"
-            style={{ display: 'block', width: '100%', maxHeight: 120, objectFit: 'contain' }}
+            alt={options.previewAlt}
+            style={{ display: 'block', width: '100%', maxHeight: 120, objectFit: options.previewFit }}
           />
         </Box>
       ) : null}
@@ -87,7 +98,7 @@ const PartnerLogoUpload = (props) => {
         </Box>
       ) : where === 'edit' && !recordId ? (
         <Text mb="default" variant="sm" color="grey60">
-          Сначала сохрани партнёра — потом здесь появится загрузка файла.
+          {options.saveFirstHint}
         </Text>
       ) : null}
 

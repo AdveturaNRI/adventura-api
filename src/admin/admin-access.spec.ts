@@ -3,12 +3,18 @@ import {
   applyAdminAccess,
   buildAdminSessionUser,
   canAccessSection,
+  partnerScopeOf,
 } from './admin-access';
 
 const manager = buildAdminSessionUser({ email: 'm@a.ru', role: 'MANAGER' });
 const superadmin = buildAdminSessionUser({
   email: 's@a.ru',
   role: 'SUPERADMIN',
+});
+const partner = buildAdminSessionUser({
+  email: 'p@a.ru',
+  role: 'PARTNER',
+  partnerId: 'partner-1',
 });
 
 type Fn = (...args: unknown[]) => unknown;
@@ -28,6 +34,27 @@ describe('admin access', () => {
     expect(canAccessSection(superadmin, undefined)).toBe(true);
     expect(canAccessSection({ email: 'legacy@a.ru' }, 'users')).toBe(false);
     expect(canAccessSection(undefined, 'users')).toBe(false);
+  });
+
+  it('limits PARTNER to partner news of its own partner', () => {
+    expect(canAccessSection(partner, 'partnerNews')).toBe(true);
+    expect(canAccessSection(partner, 'dashboard')).toBe(false);
+    expect(canAccessSection(partner, 'users')).toBe(false);
+    expect(partner.allowedPages).toEqual([]);
+    expect(partnerScopeOf(partner)).toBe('partner-1');
+    expect(partnerScopeOf(manager)).toBeUndefined();
+    expect(
+      partnerScopeOf(
+        buildAdminSessionUser({ email: 'x@a.ru', role: 'PARTNER' }),
+      ),
+    ).toBeNull();
+    expect(
+      buildAdminSessionUser({
+        email: 'm@a.ru',
+        role: 'MANAGER',
+        partnerId: 'partner-1',
+      }).partnerId,
+    ).toBeUndefined();
   });
 
   it('lists only allowed pages for the sidebar', () => {

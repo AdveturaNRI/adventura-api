@@ -13,6 +13,7 @@ export const ADMIN_SECTIONS = [
   'communications',
   'integrations',
   'access',
+  'partnerNews',
 ] as const;
 
 export type AdminSection = (typeof ADMIN_SECTIONS)[number];
@@ -27,13 +28,18 @@ export const ADMIN_ROLE_SECTIONS: Record<AdminRole, readonly AdminSection[]> = {
     'rewards',
     'publications',
     'media',
+    'partnerNews',
   ],
+  PARTNER: ['partnerNews'],
 };
 
 export const ADMIN_ROLE_LABELS: Record<AdminRole, string> = {
   SUPERADMIN: 'Суперадмин',
   MANAGER: 'Менеджер',
+  PARTNER: 'Партнёр',
 };
+
+export const PARTNER_NEWS_NAVIGATION = 'Новости партнёров';
 
 /** Resource `navigation.name` → section. Unknown groups are closed for everyone but SUPERADMIN. */
 export const ADMIN_NAVIGATION_SECTIONS: Record<string, AdminSection> = {
@@ -47,6 +53,7 @@ export const ADMIN_NAVIGATION_SECTIONS: Record<string, AdminSection> = {
   Публикации: 'publications',
   Медиа: 'media',
   Доступ: 'access',
+  [PARTNER_NEWS_NAVIGATION]: 'partnerNews',
 };
 
 /** AdminJS `pages` key → section. Unknown pages are closed for everyone but SUPERADMIN. */
@@ -71,6 +78,8 @@ export type AdminSessionUser = {
   title: string;
   role: AdminRole;
   accountId?: string;
+  /** PARTNER only: the partner whose news this login manages. */
+  partnerId?: string;
   /** Read by the SidebarPages override: the frontend bundle has no access matrix. */
   allowedPages: string[];
 };
@@ -79,6 +88,7 @@ export function buildAdminSessionUser(input: {
   email: string;
   role: AdminRole;
   accountId?: string;
+  partnerId?: string | null;
   name?: string | null;
 }): AdminSessionUser {
   const sections = ADMIN_ROLE_SECTIONS[input.role];
@@ -87,10 +97,25 @@ export function buildAdminSessionUser(input: {
     title: `${input.name?.trim() || input.email} · ${ADMIN_ROLE_LABELS[input.role]}`,
     role: input.role,
     ...(input.accountId ? { accountId: input.accountId } : {}),
+    ...(input.role === 'PARTNER' && input.partnerId
+      ? { partnerId: input.partnerId }
+      : {}),
     allowedPages: Object.entries(ADMIN_PAGE_SECTIONS)
       .filter(([, section]) => sections.includes(section))
       .map(([page]) => page),
   };
+}
+
+/**
+ * Partner whose records a PARTNER login is limited to. `undefined` means no limit
+ * (staff roles); `null` means a PARTNER login without a partner, which sees nothing.
+ */
+export function partnerScopeOf(
+  currentAdmin: unknown,
+): string | null | undefined {
+  if (roleOf(currentAdmin) !== 'PARTNER') return undefined;
+  const partnerId = (currentAdmin as { partnerId?: unknown }).partnerId;
+  return typeof partnerId === 'string' && partnerId ? partnerId : null;
 }
 
 function roleOf(currentAdmin: unknown): AdminRole | null {

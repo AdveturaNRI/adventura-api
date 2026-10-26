@@ -1069,10 +1069,44 @@ model Partner {
   showInSidebar Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  posts         PartnerPost[]
+  adminAccounts AdminAccount[]
 
   @@index([isActive, sortOrder])
   @@index([isActive, showInSidebar, sortOrder])
   @@map("partners")
+}
+
+enum PartnerPostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+/// Partner news. Shown only in the sidebar partner card and on its own page:
+/// never in our news feed, the announcement modal or unread badges.
+model PartnerPost {
+  id          String            @id @default(cuid())
+  partnerId   String
+  title       String
+  /// Plain text, line breaks kept.
+  body        String            @default("")
+  coverUrl    String?
+  actionLabel String?
+  actionUrl   String?
+  status      PartnerPostStatus @default(DRAFT)
+  publishedAt DateTime?
+  /// Without it the post stays in the sidebar for PARTNER_POST_FRESH_DAYS after publishing.
+  expiresAt   DateTime?
+  views       Int               @default(0)
+  clicks      Int               @default(0)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  partner     Partner           @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@index([status, publishedAt])
+  @@index([partnerId, status])
+  @@map("partner_posts")
 }
 
 /// Треки мастерской: фон/атмосфера для стола, пока только у владельца.
@@ -1192,6 +1226,8 @@ model SiteAnnouncementLike {
 enum AdminRole {
   SUPERADMIN
   MANAGER
+  /// Sees only the news of its own partner (AdminAccount.partnerId).
+  PARTNER
 }
 
 /// AdminJS logins. ADMIN_EMAIL / ADMIN_PASSWORD from env stay as a bootstrap superadmin.
@@ -1202,10 +1238,14 @@ model AdminAccount {
   passwordHash String
   name         String?
   role         AdminRole @default(MANAGER)
+  /// Required for PARTNER: whose news the account manages.
+  partnerId    String?
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+  partner      Partner?  @relation(fields: [partnerId], references: [id], onDelete: SetNull)
 
+  @@index([partnerId])
   @@map("admin_accounts")
 }

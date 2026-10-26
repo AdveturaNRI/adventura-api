@@ -79,6 +79,7 @@ export const ADMIN_LOCALE_RU = {
     AnalyticsEvent: 'События',
     AnalyticsDailyMetric: 'Суточные метрики',
     AdminAccount: 'Аккаунты админки',
+    PartnerPost: 'Новости партнёров',
   },
   pages: {
     grantRewards: 'Выдать награду',
@@ -284,9 +285,30 @@ export const ADMIN_LOCALE_RU = {
       properties: {
         name: 'Имя',
         role: 'Роль',
+        partnerId: 'Партнёр',
         isActive: 'Может входить',
         lastLoginAt: 'Последний вход',
         password: 'Пароль',
+      },
+    },
+    PartnerPost: {
+      labels: {
+        PartnerPost: 'Новости партнёров',
+      },
+      properties: {
+        partnerId: 'Партнёр',
+        title: 'Заголовок',
+        body: 'Текст',
+        coverUrl: 'Обложка',
+        actionLabel: 'Текст кнопки',
+        actionUrl: 'Ссылка кнопки',
+        status: 'Статус',
+        publishedAt: 'Опубликована',
+        expiresAt: 'Убрать из меню',
+        views: 'Показы',
+        clicks: 'Переходы',
+        createdAt: 'Создана',
+        updatedAt: 'Изменена',
       },
     },
   },
