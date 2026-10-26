@@ -1083,8 +1083,8 @@ enum PartnerPostStatus {
   ARCHIVED
 }
 
-/// Partner news. Shown only in the sidebar partner card and on its own page:
-/// never in our news feed, the announcement modal or unread badges.
+/// Partner news: the sidebar partner card (newest per partner, until read), the
+/// «Партнёры» tab of the news section and its own page. Never in the announcement modal.
 model PartnerPost {
   id          String            @id @default(cuid())
   partnerId   String
@@ -1096,8 +1096,6 @@ model PartnerPost {
   actionUrl   String?
   status      PartnerPostStatus @default(DRAFT)
   publishedAt DateTime?
-  /// Without it the post stays in the sidebar for PARTNER_POST_FRESH_DAYS after publishing.
-  expiresAt   DateTime?
   views       Int               @default(0)
   clicks      Int               @default(0)
   createdAt   DateTime          @default(now())

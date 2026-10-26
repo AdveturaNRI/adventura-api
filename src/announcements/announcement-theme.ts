@@ -208,6 +208,12 @@ export function sanitizeAnnouncementBody(value: unknown): string {
     /<\/?([a-z0-9]+)(\s[^>]*)?>/gi,
     (match, tag: string) => {
       const lower = tag.toLowerCase();
+      if (lower === 'strike' || lower === 'del') {
+        return match.startsWith('</') ? '</s>' : '<s>';
+      }
+      if (lower === 'div') {
+        return match.startsWith('</') ? '</p>' : '<p>';
+      }
       if (
         ![
           'p',

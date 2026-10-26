@@ -6,16 +6,14 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 
+import { sanitizeAnnouncementBody } from '../announcements/announcement-theme';
 import { ImageProcessorService } from '../image/image-processor.service';
 import { MediaService } from '../media/media.service';
 import { PrismaService } from '../prisma/prisma.service';
 
-/** How long a published post stays in the sidebar when it has no `expiresAt`. */
-export const PARTNER_POST_FRESH_DAYS = 7;
-
 const POST_ENTITY = 'PartnerPost';
 const COVER_COLLECTION = 'cover';
-const DAY_MS = 24 * 60 * 60 * 1000;
+const FEED_LIMIT = 50;
 
 export type PublicPartnerPostDto = {
   id: string;
@@ -56,7 +54,7 @@ function toPublic(row: PublicRow): PublicPartnerPostDto {
     id: row.id,
     partnerId: row.partnerId,
     title: row.title,
-    body: row.body,
+    body: sanitizeAnnouncementBody(row.body),
     coverUrl: row.coverUrl,
     actionLabel: row.actionLabel?.trim() || null,
     actionUrl: row.actionUrl?.trim() || null,
@@ -68,22 +66,10 @@ function toPublic(row: PublicRow): PublicPartnerPostDto {
   };
 }
 
-/** Published, not expired, and either within `expiresAt` or the fresh window. */
-function liveWhere(now: Date): Prisma.PartnerPostWhereInput {
-  return {
-    status: 'PUBLISHED',
-    partner: { isActive: true },
-    OR: [
-      { expiresAt: { gt: now } },
-      {
-        expiresAt: null,
-        publishedAt: {
-          gt: new Date(now.getTime() - PARTNER_POST_FRESH_DAYS * DAY_MS),
-        },
-      },
-    ],
-  };
-}
+const PUBLISHED_WHERE = {
+  status: 'PUBLISHED',
+  partner: { isActive: true },
+} satisfies Prisma.PartnerPostWhereInput;
 
 @Injectable()
 export class PartnerPostsService {
@@ -94,10 +80,10 @@ export class PartnerPostsService {
     private readonly config: ConfigService,
   ) {}
 
-  /** The newest live post of each partner: one sidebar slot per partner. */
+  /** The newest post of each partner: one sidebar slot per partner, the client hides it once read. */
   async listLive(): Promise<PublicPartnerPostDto[]> {
     const rows = await this.prisma.partnerPost.findMany({
-      where: liveWhere(new Date()),
+      where: PUBLISHED_WHERE,
       orderBy: { publishedAt: 'desc' },
       select: publicSelect,
     });
@@ -111,10 +97,21 @@ export class PartnerPostsService {
       .map(toPublic);
   }
 
-  /** Expired posts stay readable by direct link; drafts and archived ones do not. */
+  /** Partners tab of the news feed: every published post, newest first. */
+  async listFeed(): Promise<PublicPartnerPostDto[]> {
+    const rows = await this.prisma.partnerPost.findMany({
+      where: PUBLISHED_WHERE,
+      orderBy: { publishedAt: 'desc' },
+      take: FEED_LIMIT,
+      select: publicSelect,
+    });
+    return rows.map(toPublic);
+  }
+
+  /** Drafts and archived posts are not readable even by direct link. */
   async getPublished(id: string): Promise<PublicPartnerPostDto> {
     const row = await this.prisma.partnerPost.findFirst({
-      where: { id, status: 'PUBLISHED', partner: { isActive: true } },
+      where: { id, ...PUBLISHED_WHERE },
       select: publicSelect,
     });
     if (!row) throw new NotFoundException('Новость не найдена');
@@ -133,33 +130,19 @@ export class PartnerPostsService {
   }
 
   /**
-   * Admin save hook: stamps `publishedAt` on (re)publish and archives the partner's
-   * previous published post, so each partner has one live post at a time.
+   * Admin save hook: stamps `publishedAt` on first publish. Older posts stay published
+   * for the news feed; the sidebar picks the newest one per partner in `listLive`.
    */
   async afterSave(id: string): Promise<void> {
     const post = await this.prisma.partnerPost.findUnique({
       where: { id },
-      select: { id: true, partnerId: true, status: true, publishedAt: true },
+      select: { status: true, publishedAt: true },
     });
-    if (!post || post.status !== 'PUBLISHED') return;
-    await this.prisma.$transaction([
-      ...(post.publishedAt
-        ? []
-        : [
-            this.prisma.partnerPost.update({
-              where: { id },
-              data: { publishedAt: new Date() },
-            }),
-          ]),
-      this.prisma.partnerPost.updateMany({
-        where: {
-          partnerId: post.partnerId,
-          status: 'PUBLISHED',
-          id: { not: id },
-        },
-        data: { status: 'ARCHIVED' },
-      }),
-    ]);
+    if (!post || post.status !== 'PUBLISHED' || post.publishedAt) return;
+    await this.prisma.partnerPost.update({
+      where: { id },
+      data: { publishedAt: new Date() },
+    });
   }
 
   async uploadCover(

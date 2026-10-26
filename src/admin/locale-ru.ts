@@ -285,6 +285,7 @@ export const ADMIN_LOCALE_RU = {
       properties: {
         name: 'Имя',
         role: 'Роль',
+        partner: 'Партнёр',
         partnerId: 'Партнёр',
         isActive: 'Может входить',
         lastLoginAt: 'Последний вход',
@@ -296,6 +297,7 @@ export const ADMIN_LOCALE_RU = {
         PartnerPost: 'Новости партнёров',
       },
       properties: {
+        partner: 'Партнёр',
         partnerId: 'Партнёр',
         title: 'Заголовок',
         body: 'Текст',
@@ -304,7 +306,6 @@ export const ADMIN_LOCALE_RU = {
         actionUrl: 'Ссылка кнопки',
         status: 'Статус',
         publishedAt: 'Опубликована',
-        expiresAt: 'Убрать из меню',
         views: 'Показы',
         clicks: 'Переходы',
         createdAt: 'Создана',

@@ -131,20 +131,24 @@ export function buildAdminAccountResourceOptions(
 
       const previous = context.record?.params;
       const role = payload.role ?? previous?.role;
-      const partnerId = payload.partnerId ?? previous?.partnerId;
+      // The form edits the relation (`partner`), AdminJS sends the record id there.
+      const submitted =
+        payload.partner !== undefined ? payload.partner : payload.partnerId;
+      const partnerId =
+        submitted === undefined
+          ? (previous?.partnerId ?? null)
+          : submitted === '' || submitted === null
+            ? null
+            : String(submitted);
       if (role === 'PARTNER' && !partnerId) {
         throw new ValidationError({
-          partnerId: {
+          partner: {
             message: 'Выбери партнёра, чьи новости ведёт этот логин',
           },
         });
       }
-      if (
-        payload.partnerId === '' ||
-        (role !== 'PARTNER' && payload.partnerId)
-      ) {
-        payload.partnerId = null;
-      }
+      payload.partner = role === 'PARTNER' ? partnerId : null;
+      payload.partnerId = payload.partner;
 
       if (previous) {
         context.revokeAdminSessions =
@@ -185,17 +189,17 @@ export function buildAdminAccountResourceOptions(
       'email',
       'name',
       'role',
-      'partnerId',
+      'partner',
       'isActive',
       'lastLoginAt',
     ],
-    filterProperties: ['email', 'name', 'role', 'partnerId', 'isActive'],
+    filterProperties: ['email', 'name', 'role', 'partner', 'isActive'],
     showProperties: [
       'id',
       'email',
       'name',
       'role',
-      'partnerId',
+      'partner',
       'isActive',
       'lastLoginAt',
       'createdAt',
@@ -205,12 +209,13 @@ export function buildAdminAccountResourceOptions(
       'email',
       'name',
       'role',
-      'partnerId',
+      'partner',
       'isActive',
       'password',
     ],
     properties: {
-      partnerId: {
+      partnerId: { isVisible: false },
+      partner: {
         description:
           'Только для роли «Партнёр»: чьи новости публикует этот логин.',
       },

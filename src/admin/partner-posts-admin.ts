@@ -1,8 +1,11 @@
+import { sanitizeAnnouncementBody } from '../announcements/announcement-theme';
 import type { PartnerPostsService } from '../partners/partner-posts.service';
-import { PARTNER_POST_FRESH_DAYS } from '../partners/partner-posts.service';
 import { PARTNER_NEWS_NAVIGATION, partnerScopeOf } from './admin-access';
 
 const TITLE_MAX = 100;
+/** Form-only params: the cover picked before the record exists. */
+const PENDING_COVER = 'coverPendingFile';
+const PENDING_COVER_MIME = `${PENDING_COVER}Mime`;
 /** Matches nothing: a PARTNER login without a partner gets an empty list. */
 const NO_PARTNER = '__no_partner__';
 
@@ -19,6 +22,7 @@ type ActionRequest = {
 };
 type ActionContext = {
   currentAdmin?: unknown;
+  pendingCover?: { buffer: Buffer; mimetype: string };
   record?: {
     params: RecordParams;
     toJSON: (admin?: unknown) => unknown;
@@ -41,11 +45,16 @@ const isPost = (request: ActionRequest) =>
 const asText = (value: unknown, fallback = '') =>
   typeof value === 'string' ? value : fallback;
 
+/** The Prisma adapter exposes the relation (`partner`), not the raw `partnerId` column. */
+function recordPartnerId(params: RecordParams | undefined): unknown {
+  return params?.partner ?? params?.partnerId;
+}
+
 /** Staff see every record; a PARTNER login only records of its own partner. */
 function ownsRecord(context: ActionContext): boolean {
   const scope = partnerScopeOf(context.currentAdmin);
   if (scope === undefined) return true;
-  return Boolean(scope) && context.record?.params.partnerId === scope;
+  return Boolean(scope) && recordPartnerId(context.record?.params) === scope;
 }
 
 function canUseResource(context: ActionContext): boolean {
@@ -56,17 +65,37 @@ export function buildPartnerPostResourceOptions(
   posts: PartnerPostsService,
   ValidationError: ValidationErrorCtor,
   coverUploadComponent: string,
+  partnerFieldComponent: string,
+  bodyEditorComponent: string,
 ) {
   const preparePayload = (request: ActionRequest, context: ActionContext) => {
     if (!isPost(request) || !request.payload) return request;
     const payload = { ...request.payload };
     const scope = partnerScopeOf(context.currentAdmin);
-    if (scope) payload.partnerId = scope;
+    // Adapter writes the relation property onto the partnerId column.
+    if (scope) payload.partner = scope;
+    delete payload.partnerId;
 
     // Counters and the publish stamp are server-side only.
     delete payload.views;
     delete payload.clicks;
     delete payload.publishedAt;
+
+    const pendingRaw = asText(payload[PENDING_COVER]).trim();
+    const pendingMime = asText(payload[PENDING_COVER_MIME], 'image/png');
+    delete payload[PENDING_COVER];
+    delete payload[PENDING_COVER_MIME];
+    if (pendingRaw) {
+      const base64 = pendingRaw.includes(',')
+        ? (pendingRaw.split(',').pop() ?? '')
+        : pendingRaw;
+      if (base64) {
+        context.pendingCover = {
+          buffer: Buffer.from(base64, 'base64'),
+          mimetype: pendingMime || 'image/png',
+        };
+      }
+    }
 
     const errors: Record<string, { message: string }> = {};
     const title = typeof payload.title === 'string' ? payload.title.trim() : '';
@@ -76,7 +105,7 @@ export function buildPartnerPostResourceOptions(
         message: `Не длиннее ${TITLE_MAX} символов: заголовок виден в узкой карточке`,
       };
     }
-    if (!payload.partnerId) errors.partnerId = { message: 'Выбери партнёра' };
+    if (!payload.partner) errors.partner = { message: 'Выбери партнёра' };
     const actionUrl =
       typeof payload.actionUrl === 'string' ? payload.actionUrl.trim() : '';
     if (actionUrl && !/^https?:\/\//i.test(actionUrl)) {
@@ -86,8 +115,14 @@ export function buildPartnerPostResourceOptions(
 
     payload.title = title;
     payload.actionUrl = actionUrl || null;
-    if (payload.expiresAt === '') payload.expiresAt = null;
-
+    if (typeof payload.body === 'string') {
+      const cleaned = sanitizeAnnouncementBody(payload.body);
+      const plain = cleaned
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .trim();
+      payload.body = plain ? cleaned : '';
+    }
     const wasPublished = context.record?.params.status === 'PUBLISHED';
     if (payload.status === 'PUBLISHED' && !wasPublished) {
       payload.publishedAt = new Date().toISOString();
@@ -98,11 +133,15 @@ export function buildPartnerPostResourceOptions(
   const afterSave = async (
     response: ActionResponse,
     request: ActionRequest,
+    context: ActionContext,
   ) => {
     const id = response.record?.params?.id;
-    if (isPost(request) && typeof id === 'string' && id) {
-      await posts.afterSave(id);
+    if (!isPost(request) || typeof id !== 'string' || !id) return response;
+    if (context.pendingCover) {
+      const { coverUrl } = await posts.uploadCover(id, context.pendingCover);
+      if (response.record?.params) response.record.params.coverUrl = coverUrl;
     }
+    await posts.afterSave(id);
     return response;
   };
 
@@ -112,42 +151,44 @@ export function buildPartnerPostResourceOptions(
     sort: { sortBy: 'createdAt', direction: 'desc' },
     listProperties: [
       'title',
-      'partnerId',
+      'partner',
       'status',
       'publishedAt',
-      'expiresAt',
       'views',
       'clicks',
     ],
-    filterProperties: ['title', 'partnerId', 'status'],
+    filterProperties: ['title', 'partner', 'status'],
     showProperties: [
       'title',
-      'partnerId',
+      'partner',
       'status',
       'coverUrl',
       'body',
       'actionLabel',
       'actionUrl',
       'publishedAt',
-      'expiresAt',
       'views',
       'clicks',
       'createdAt',
       'updatedAt',
     ],
     editProperties: [
-      'partnerId',
+      'partner',
       'title',
       'body',
       'coverUrl',
       'actionLabel',
       'actionUrl',
       'status',
-      'expiresAt',
     ],
     properties: {
-      partnerId: {
-        description: 'Для партнёрского логина подставляется автоматически.',
+      partner: {
+        description:
+          'Чья новость. У партнёрского логина поле скрыто: партнёр берётся из аккаунта.',
+        components: {
+          edit: partnerFieldComponent,
+          filter: partnerFieldComponent,
+        },
       },
       title: {
         isRequired: true,
@@ -155,8 +196,12 @@ export function buildPartnerPostResourceOptions(
       },
       body: {
         type: 'textarea',
-        props: { rows: 8 },
-        description: 'Обычный текст, переносы строк сохраняются.',
+        description:
+          'Жирный, курсив, списки, цитата и ссылка — как в обычной новости.',
+        components: {
+          edit: bodyEditorComponent,
+          show: bodyEditorComponent,
+        },
       },
       coverUrl: {
         description: 'Горизонтальная картинка, лучше 16:9.',
@@ -167,8 +212,7 @@ export function buildPartnerPostResourceOptions(
           label: 'Обложка',
           previewAlt: 'Обложка новости',
           previewFit: 'cover',
-          saveFirstHint:
-            'Сначала сохрани новость — потом здесь появится загрузка файла.',
+          pendingFileParam: PENDING_COVER,
         },
       },
       actionLabel: {
@@ -182,10 +226,7 @@ export function buildPartnerPostResourceOptions(
           { value: 'ARCHIVED', label: 'Снята' },
         ],
         description:
-          'Опубликованная новость сразу появляется в меню. Одновременно живёт одна: прошлая снимается сама.',
-      },
-      expiresAt: {
-        description: `Когда убрать из меню. Пусто — через ${PARTNER_POST_FRESH_DAYS} дней после публикации.`,
+          'Опубликованная новость сразу появляется в меню и во вкладке «Партнёры» в разделе «Новости». В меню висит самая свежая, пока человек её не прочитает. Прошлые остаются в ленте.',
       },
       publishedAt: {
         isVisible: { list: true, show: true, edit: false, filter: false },
@@ -207,7 +248,7 @@ export function buildPartnerPostResourceOptions(
             ...request,
             query: {
               ...(request.query ?? {}),
-              'filters.partnerId': scope ?? NO_PARTNER,
+              'filters.partner': scope ?? NO_PARTNER,
             },
           };
         },

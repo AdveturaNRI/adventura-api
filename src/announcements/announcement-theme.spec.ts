@@ -59,6 +59,17 @@ describe('sanitizeAnnouncementBody', () => {
     expect(cleaned).toContain('<strong>ok</strong>');
   });
 
+  it('keeps the same marks a news editor produces', () => {
+    const cleaned = sanitizeAnnouncementBody(
+      '<div><strong>жирный</strong> <em>курсив</em></div><strike>нет</strike><ul><li>пункт</li></ul>',
+    );
+    expect(cleaned).toContain('<p><strong>жирный</strong> <em>курсив</em></p>');
+    expect(cleaned).toContain('<s>нет</s>');
+    expect(cleaned).toContain('<ul><li>пункт</li></ul>');
+    expect(cleaned).not.toContain('<div');
+    expect(cleaned).not.toContain('<strike');
+  });
+
   it('keeps safe links only', () => {
     const cleaned = sanitizeAnnouncementBody(
       '<a href="javascript:alert(1)">bad</a><a href="https://ok.test">good</a>',

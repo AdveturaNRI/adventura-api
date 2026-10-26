@@ -1265,6 +1265,14 @@ export async function setupAdmin(
     'PartnerLogoUpload',
     resolveAdminComponent('partner-logo-upload'),
   );
+  const partnerPostPartnerFieldComponent = componentLoader.add(
+    'PartnerPostPartnerField',
+    resolveAdminComponent('partner-post-partner-field'),
+  );
+  const partnerPostBodyEditorComponent = componentLoader.add(
+    'PartnerPostBodyEditor',
+    resolveAdminComponent('partner-post-body-editor'),
+  );
   componentLoader.override('SidebarPages', resolveAdminComponent('sidebar-pages'));
 
   const analyticsNavigation = { name: 'Аналитика', icon: 'Activity' };
@@ -2605,6 +2613,7 @@ export async function setupAdmin(
         resource: { model: getModelByName('Partner'), client: prisma },
         options: {
           navigation: { name: 'Справочники', icon: 'Book' },
+          titleProperty: 'name',
           listProperties: [
             'id',
             'name',
@@ -3069,6 +3078,8 @@ export async function setupAdmin(
           partnerPosts,
           adminjsModule.ValidationError,
           partnerLogoUploadComponent,
+          partnerPostPartnerFieldComponent,
+          partnerPostBodyEditorComponent,
         ),
       },
       {
@@ -3102,6 +3113,8 @@ export async function setupAdmin(
     'MarketingAnalyticsAdmin',
     'GrantRewards',
     'PartnerLogoUpload',
+    'PartnerPostPartnerField',
+    'PartnerPostBodyEditor',
     'SidebarPages',
   ] as const;
 
@@ -3221,10 +3234,16 @@ export async function setupAdmin(
   expressApp.get(
     `${admin.options.rootPath}/frontend/assets/components.bundle.js`,
     (_req: Request, res: Response) => {
-      const stableOk =
-        existsSync(stableBundlePath) &&
-        Buffer.byteLength(readFileSync(stableBundlePath)) > 1024;
-      const filePath = stableOk ? stableBundlePath : rollupBundlePath;
+      const isUsable = (path: string) =>
+        existsSync(path) && Buffer.byteLength(readFileSync(path)) > 1024;
+      // In dev, admin.watch() rebundles into rollupBundlePath on every .jsx edit;
+      // the stable copy is only taken once at startup.
+      const filePath =
+        !isProd && isUsable(rollupBundlePath)
+          ? rollupBundlePath
+          : isUsable(stableBundlePath)
+            ? stableBundlePath
+            : rollupBundlePath;
       try {
         const body = readFileSync(filePath);
         if (body.byteLength < 1024) {

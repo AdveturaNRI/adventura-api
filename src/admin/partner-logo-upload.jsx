@@ -31,10 +31,32 @@ const PartnerLogoUpload = (props) => {
   const path = property.path;
   const value = record?.params?.[path] ?? '';
   const recordId = record?.params?.id ? String(record.params.id) : '';
-  const canUpload = Boolean(recordId) && where === 'edit';
+  // New record: the file rides along with the form and the server uploads it after create.
+  const pendingParam = options.pendingFileParam;
+  const pendingFile = pendingParam ? record?.params?.[pendingParam] ?? '' : '';
+  const canDefer = Boolean(pendingParam) && !recordId;
+  const canUpload = (Boolean(recordId) || canDefer) && where === 'edit';
+  const preview = pendingFile || value;
 
   const handleUpload = async (file) => {
-    if (!file || !recordId) return;
+    if (!file) return;
+    if (canDefer) {
+      setBusy(true);
+      try {
+        const base64 = await readFileAsDataUrl(file);
+        onChange(pendingParam, base64);
+        onChange(`${pendingParam}Mime`, file.type || 'image/png');
+      } catch (error) {
+        addNotice({
+          message: error instanceof Error ? error.message : 'Не удалось прочитать файл',
+          type: 'error',
+        });
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    if (!recordId) return;
     setBusy(true);
     try {
       const base64 = await readFileAsDataUrl(file);
@@ -69,11 +91,11 @@ const PartnerLogoUpload = (props) => {
 
   return (
     <FormGroup>
-      <Label>{property.label || options.label}</Label>
-      {value ? (
+      <Label>{options.label}</Label>
+      {preview ? (
         <Box mb="default" p="default" variant="grey20" style={{ borderRadius: 8, maxWidth: 280 }}>
           <img
-            src={value}
+            src={preview}
             alt={options.previewAlt}
             style={{ display: 'block', width: '100%', maxHeight: 120, objectFit: options.previewFit }}
           />
@@ -93,8 +115,28 @@ const PartnerLogoUpload = (props) => {
             }}
           />
           <Text mt="sm" variant="sm" color="grey60">
-            {busy ? 'Загружаю…' : 'PNG / JPEG / WebP — сохранится в S3, URL подставится сам.'}
+            {busy
+              ? 'Загружаю…'
+              : canDefer
+                ? pendingFile
+                  ? 'Файл выбран — загрузится при сохранении.'
+                  : 'PNG / JPEG / WebP — загрузится при сохранении.'
+                : 'PNG / JPEG / WebP — сохранится в S3, URL подставится сам.'}
           </Text>
+          {pendingFile ? (
+            <Button
+              mt="default"
+              size="sm"
+              variant="danger"
+              type="button"
+              onClick={() => {
+                onChange(pendingParam, '');
+                onChange(`${pendingParam}Mime`, '');
+              }}
+            >
+              Убрать файл
+            </Button>
+          ) : null}
         </Box>
       ) : where === 'edit' && !recordId ? (
         <Text mb="default" variant="sm" color="grey60">

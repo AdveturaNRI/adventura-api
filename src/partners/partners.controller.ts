@@ -38,6 +38,12 @@ export class PartnersController {
     return this.posts.listLive();
   }
 
+  /** Вкладка «Партнёры» в разделе «Новости». */
+  @Get('news/feed')
+  listNewsFeed() {
+    return this.posts.listFeed();
+  }
+
   @Get('news/:id')
   getNews(@Param('id') id: string) {
     return this.posts.getPublished(id);
