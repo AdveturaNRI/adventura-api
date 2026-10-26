@@ -15,7 +15,7 @@ import {
   type Conversation,
 } from '@prisma/client';
 import { randomUUID } from 'crypto';
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 
 import { ImageProcessorService } from '../image/image-processor.service';
 import type { ImageUrls } from '../image/image.types';
@@ -58,6 +58,10 @@ const VOICE_CALL_WAIT_MS = 5 * 60_000;
 const VOICE_CALL_ABANDON_MS = VOICE_CALL_WAIT_MS;
 /** Safety prune for abandoned solo lobbies. */
 const VOICE_CALL_TTL_MS = VOICE_CALL_WAIT_MS + 30_000;
+/** Re-check LiveKit presence for a group call kept alive by the room, not by join/end. */
+const VOICE_CALL_ROOM_RECHECK_MS = 60_000;
+/** Avatars in the chat's «join call» banner. */
+const VOICE_CALL_PREVIEW_PARTICIPANTS = 4;
 
 type ActiveVoiceCall = {
   callId: string;
@@ -72,6 +76,12 @@ type ActiveVoiceCall = {
   /** Already in the LiveKit room (caller starts here). */
   joinedUserIds: string[];
   createdAt: number;
+  /** When the lobby last dropped to one occupant — TTL prune counts from here. */
+  soloSince?: number;
+  /** Someone besides the caller got in — ending it is not a missed call. */
+  answered?: boolean;
+  /** waitTimer is a LiveKit presence re-check, not a solo-lobby expiry. */
+  roomRecheck?: boolean;
   ringTimer?: ReturnType<typeof setTimeout>;
   /** Ends the lobby if nobody else joined. */
   waitTimer?: ReturnType<typeof setTimeout>;
@@ -2904,24 +2914,45 @@ export class ChatsService {
       isGroup,
     };
 
+    // Server state can lose a live group (restart, missed join). People still in the
+    // LiveKit room are already talking — count them as joined and don't ring them.
+    const roomIds = isGroup
+      ? await this.listVoiceRoomIdentities(conversationId)
+      : null;
+    const alreadyInRoom = (roomIds ?? []).filter((id) => targets.includes(id));
+    const ringTargets = targets.filter((id) => !alreadyInRoom.includes(id));
+
+    if (this.findActiveCallForConversation(conversationId)) {
+      throw new BadRequestException('В этом чате уже идёт звонок');
+    }
+
+    const now = Date.now();
+    const joinedUserIds = uniqueIds([userId, ...alreadyInRoom]);
     const call: ActiveVoiceCall = {
       ...payload,
-      ringingUserIds: targets,
-      joinedUserIds: [userId],
-      createdAt: Date.now(),
+      ringingUserIds: ringTargets,
+      joinedUserIds,
+      createdAt: now,
+      soloSince: joinedUserIds.length === 1 ? now : undefined,
+      answered: joinedUserIds.length > 1,
     };
-    call.ringTimer = setTimeout(() => {
-      void this.stopVoiceCallRinging(callId);
-    }, VOICE_CALL_RING_MS);
-    call.waitTimer = setTimeout(() => {
-      void this.expireSoloVoiceCall(callId);
-    }, VOICE_CALL_WAIT_MS);
+    if (ringTargets.length > 0) {
+      call.ringTimer = setTimeout(() => {
+        void this.stopVoiceCallRinging(callId);
+      }, VOICE_CALL_RING_MS);
+    }
+    if (joinedUserIds.length === 1) {
+      call.waitTimer = setTimeout(() => {
+        void this.expireSoloVoiceCall(callId);
+      }, VOICE_CALL_WAIT_MS);
+    }
 
     this.activeVoiceCalls.set(callId, call);
+    // Room occupants get the invite too: their client swaps to the new callId without leaving.
     this.realtime.emitCallInvite(targets, payload);
-    void this.pushVoiceCallInvite(targets, payload);
+    void this.pushVoiceCallInvite(ringTargets, payload);
 
-    const ringing = await this.toVoiceCallPeers(targets);
+    const ringing = await this.toVoiceCallPeers(ringTargets);
     return { callId, conversationId, isGroup, ringing };
   }
 
@@ -2965,6 +2996,10 @@ export class ChatsService {
     }
     const isJoined = call.joinedUserIds.includes(userId);
     const isRinging = call.ringingUserIds.includes(userId);
+    // Polled every few seconds by open chats — only what the avatar stack shows.
+    const participants = await this.toVoiceCallPeers(
+      call.joinedUserIds.slice(0, VOICE_CALL_PREVIEW_PARTICIPANTS),
+    );
     return {
       callId: call.callId,
       conversationId: call.conversationId,
@@ -2974,6 +3009,7 @@ export class ChatsService {
       conversationTitle: call.conversationTitle,
       isGroup: call.isGroup,
       joinedCount: call.joinedUserIds.length,
+      participants,
       canJoin: !isJoined,
       isJoined,
       /** Still in the ring window — client should show Accept UI even if WS invite was missed. */
@@ -3007,10 +3043,11 @@ export class ChatsService {
 
     call.ringingUserIds = call.ringingUserIds.filter((id) => id !== userId);
     call.joinedUserIds.push(userId);
+    call.answered = true;
     if (call.ringingUserIds.length === 0) {
       this.clearVoiceCallRingTimer(call);
     }
-    if (call.joinedUserIds.length > 1) {
+    if (call.joinedUserIds.length > 1 && !call.roomRecheck) {
       this.clearVoiceCallWaitTimer(call);
     }
 
@@ -3054,10 +3091,11 @@ export class ChatsService {
 
     call.ringingUserIds = call.ringingUserIds.filter((id) => id !== userId);
     call.joinedUserIds.push(userId);
+    call.answered = true;
     if (call.ringingUserIds.length === 0) {
       this.clearVoiceCallRingTimer(call);
     }
-    if (call.joinedUserIds.length > 1) {
+    if (call.joinedUserIds.length > 1 && !call.roomRecheck) {
       this.clearVoiceCallWaitTimer(call);
     }
 
@@ -3140,6 +3178,21 @@ export class ChatsService {
       call.joinedUserIds = call.joinedUserIds.filter((id) => id !== userId);
     }
 
+    // Join list says empty, but people may still be talking in LiveKit (missed join,
+    // flaky client). Never end a live group call because of server bookkeeping.
+    if (call.isGroup && inJoined && call.joinedUserIds.length === 0) {
+      const roomIds = await this.listVoiceRoomIdentities(conversationId);
+      if (this.activeVoiceCalls.get(callId) !== call) {
+        return { ok: true as const };
+      }
+      const stillInRoom = (roomIds ?? []).filter((id) => id !== userId);
+      if (stillInRoom.length > 0) {
+        call.joinedUserIds = uniqueIds([...call.joinedUserIds, ...stillInRoom]);
+        this.scheduleVoiceCallRoomRecheck(call);
+        return { ok: true as const };
+      }
+    }
+
     // Empty room, or 1:1 hangup while the peer was still in — end for everyone.
     const endForEveryone =
       call.joinedUserIds.length === 0 || (!call.isGroup && inJoined);
@@ -3149,7 +3202,7 @@ export class ChatsService {
       this.activeVoiceCalls.delete(callId);
       // Whole chat — join banners must clear, not only joined/ringing.
       await this.emitCallEndedToConversation(call, userId, ringingLeft);
-      if (aloneBeforeLeave) {
+      if (aloneBeforeLeave && !call.answered) {
         try {
           await this.postMissedVoiceCallMessage(
             call.fromUserId,
@@ -3168,6 +3221,7 @@ export class ChatsService {
 
     // Group: someone left — remaining people keep the lobby.
     if (call.joinedUserIds.length === 1) {
+      call.soloSince = Date.now();
       this.clearVoiceCallWaitTimer(call);
       call.waitTimer = setTimeout(() => {
         void this.expireAbandonedVoiceCall(callId);
@@ -3229,6 +3283,9 @@ export class ChatsService {
       stillRinging,
     );
 
+    if (call.answered) {
+      return;
+    }
     try {
       await this.postMissedVoiceCallMessage(
         call.fromUserId,
@@ -3244,6 +3301,18 @@ export class ChatsService {
     const call = this.activeVoiceCalls.get(callId);
     if (!call || call.joinedUserIds.length > 1) {
       return;
+    }
+
+    if (call.isGroup) {
+      const roomIds = await this.listVoiceRoomIdentities(call.conversationId);
+      if (this.activeVoiceCalls.get(callId) !== call) {
+        return;
+      }
+      if (roomIds && roomIds.length > 1) {
+        call.joinedUserIds = uniqueIds([...call.joinedUserIds, ...roomIds]);
+        this.scheduleVoiceCallRoomRecheck(call);
+        return;
+      }
     }
 
     const snapshot = {
@@ -3299,11 +3368,90 @@ export class ChatsService {
       clearTimeout(call.waitTimer);
       call.waitTimer = undefined;
     }
+    call.roomRecheck = false;
   }
 
   private clearVoiceCallTimers(call: ActiveVoiceCall) {
     this.clearVoiceCallRingTimer(call);
     this.clearVoiceCallWaitTimer(call);
+  }
+
+  /** Identities in the LiveKit room for this chat; null if LiveKit is unknown/unreachable. */
+  private async listVoiceRoomIdentities(
+    conversationId: string,
+  ): Promise<string[] | null> {
+    const url = this.config.get<string>('LIVEKIT_URL')?.trim();
+    const apiKey = this.config.get<string>('LIVEKIT_API_KEY')?.trim();
+    const apiSecret = this.config.get<string>('LIVEKIT_API_SECRET')?.trim();
+    if (!url || !apiKey || !apiSecret) {
+      return null;
+    }
+    try {
+      const client = new RoomServiceClient(url, apiKey, apiSecret, {
+        requestTimeout: 3,
+      });
+      const participants = await client.listParticipants(
+        `chat:${conversationId}`,
+      );
+      return uniqueIds(
+        participants
+          .map((p) => p.identity)
+          .filter((id): id is string => Boolean(id)),
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Group call kept alive by LiveKit presence: its join list may hold people who will
+   * never call /end. Re-check the room until it empties, then close the call.
+   */
+  private scheduleVoiceCallRoomRecheck(call: ActiveVoiceCall) {
+    this.clearVoiceCallWaitTimer(call);
+    call.soloSince = call.joinedUserIds.length === 1 ? Date.now() : undefined;
+    call.answered = true;
+    call.roomRecheck = true;
+    call.waitTimer = setTimeout(() => {
+      void this.recheckVoiceCallRoom(call.callId);
+    }, VOICE_CALL_ROOM_RECHECK_MS);
+  }
+
+  private async recheckVoiceCallRoom(callId: string) {
+    const call = this.activeVoiceCalls.get(callId);
+    if (!call) {
+      return;
+    }
+    call.waitTimer = undefined;
+    call.roomRecheck = false;
+    const roomIds = await this.listVoiceRoomIdentities(call.conversationId);
+    if (this.activeVoiceCalls.get(callId) !== call) {
+      return;
+    }
+    if (roomIds === null || roomIds.length > 1) {
+      if (roomIds) {
+        call.joinedUserIds = roomIds;
+      }
+      this.scheduleVoiceCallRoomRecheck(call);
+      return;
+    }
+    // One or zero left in the room — hand back to the normal solo-lobby flow.
+    call.joinedUserIds = roomIds;
+    if (roomIds.length === 0) {
+      const snapshot = {
+        ...call,
+        joinedUserIds: [],
+        ringingUserIds: [...call.ringingUserIds],
+      };
+      this.clearVoiceCallTimers(call);
+      this.activeVoiceCalls.delete(callId);
+      await this.emitCallEndedToConversation(snapshot, call.fromUserId);
+      return;
+    }
+    call.soloSince = Date.now();
+    call.waitTimer = setTimeout(() => {
+      void this.expireAbandonedVoiceCall(callId);
+    }, VOICE_CALL_ABANDON_MS);
   }
 
   private async toVoiceCallPeers(userIds: string[]) {
@@ -3422,7 +3570,7 @@ export class ChatsService {
       if (call.joinedUserIds.length > 1) {
         continue;
       }
-      if (now - call.createdAt > VOICE_CALL_TTL_MS) {
+      if (now - (call.soloSince ?? call.createdAt) > VOICE_CALL_TTL_MS) {
         const snapshot = {
           ...call,
           joinedUserIds: [...call.joinedUserIds],
