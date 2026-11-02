@@ -4,14 +4,16 @@ import {
   Delete,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Query,
   UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 
 import { MAX_UPLOAD_FILE_SIZE_BYTES } from '../common/upload.constants';
@@ -23,9 +25,12 @@ import { ApplyGameDto } from './dto/apply-game.dto';
 import { CreateGameDto } from './dto/create-game.dto';
 import { DeleteGameDto } from './dto/delete-game.dto';
 import { ListGamesFeedQueryDto } from './dto/list-games-feed.dto';
+import { ReorderGameGalleryDto } from './dto/reorder-game-gallery.dto';
 import { UpdateGameStatusDto } from './dto/update-game-status.dto';
 import { UpdateGameDto } from './dto/update-game.dto';
 import { GamesService } from './games.service';
+
+const GALLERY_UPLOAD_LIMIT_BYTES = 5 * 1024 * 1024;
 
 @Controller('games')
 export class GamesController {
@@ -156,6 +161,58 @@ export class GamesController {
   @UseGuards(JwtAuthGuard)
   deleteCover(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.gamesService.deleteCover(user!.id, id);
+  }
+
+  @Post(':id/gallery')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(
+    FilesInterceptor('gallery', 8, {
+      storage: memoryStorage(),
+      limits: { fileSize: Math.min(MAX_UPLOAD_FILE_SIZE_BYTES, GALLERY_UPLOAD_LIMIT_BYTES) },
+    }),
+  )
+  uploadGallery(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @UploadedFiles() files?: Express.Multer.File[],
+  ) {
+    return this.gamesService.uploadGallery(user!.id, id, files ?? []);
+  }
+
+  @Post(':id/gallery/items')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(
+    FilesInterceptor('gallery', 8, {
+      storage: memoryStorage(),
+      limits: { fileSize: Math.min(MAX_UPLOAD_FILE_SIZE_BYTES, GALLERY_UPLOAD_LIMIT_BYTES) },
+    }),
+  )
+  addGalleryItems(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @UploadedFiles() files?: Express.Multer.File[],
+  ) {
+    return this.gamesService.addGalleryItems(user!.id, id, files ?? []);
+  }
+
+  @Patch(':id/gallery/order')
+  @UseGuards(JwtAuthGuard)
+  reorderGallery(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ReorderGameGalleryDto,
+  ) {
+    return this.gamesService.reorderGallery(user!.id, id, dto.order);
+  }
+
+  @Delete(':id/gallery/:index')
+  @UseGuards(JwtAuthGuard)
+  deleteGalleryItem(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('index', ParseIntPipe) index: number,
+  ) {
+    return this.gamesService.deleteGalleryItem(user!.id, id, index);
   }
 
   @Delete(':id')

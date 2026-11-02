@@ -32,6 +32,8 @@ export type GameListItem = {
   anyAge: boolean;
   systemName: string;
   cover: ImageUrls | null;
+  /** Card/original URLs for screenshots gallery (ordered). */
+  galleryUrls: string[];
   playersCount: number;
   pendingApplicationsCount: number;
   owner: GameOwnerSummary | null;

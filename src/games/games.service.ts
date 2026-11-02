@@ -51,6 +51,10 @@ import type {
 
 const GAME_ENTITY_TYPE = 'Game';
 const COVER_COLLECTION = 'cover';
+const GALLERY_PREFIX = 'gallery-';
+const MAX_GALLERY = 8;
+/** AC: screenshots ≤ 5 MB each (stricter than global cover upload). */
+const GALLERY_MAX_FILE_BYTES = 5 * 1024 * 1024;
 const USER_ENTITY_TYPE = 'User';
 const AVATAR_COLLECTION = 'avatar';
 /** How often an owner may raise a listing to the top of the feed. */
@@ -1165,6 +1169,7 @@ export class GamesService {
       entityId: gameId,
       collection: COVER_COLLECTION,
     });
+    await this.deleteGallery(gameId);
 
     await this.prisma.game.delete({
       where: { id: gameId },
@@ -1191,6 +1196,88 @@ export class GamesService {
       data: { updatedAt: new Date() },
     });
 
+    return this.getOwned(ownerId, gameId);
+  }
+
+  async uploadGallery(ownerId: string, gameId: string, files: Express.Multer.File[]) {
+    await this.requireOwnedGame(ownerId, gameId);
+
+    if (!files?.length) {
+      throw new BadRequestException('Файлы не переданы');
+    }
+
+    if (files.length > MAX_GALLERY) {
+      throw new BadRequestException(`Максимум ${MAX_GALLERY} фото в галерее`);
+    }
+
+    this.assertGalleryFiles(files);
+    await this.deleteGallery(gameId);
+
+    for (let index = 0; index < files.length; index += 1) {
+      await this.storeGalleryFile(gameId, index, files[index]);
+    }
+
+    await this.touchGame(gameId);
+    return this.getOwned(ownerId, gameId);
+  }
+
+  async addGalleryItems(ownerId: string, gameId: string, files: Express.Multer.File[]) {
+    await this.requireOwnedGame(ownerId, gameId);
+
+    if (!files?.length) {
+      throw new BadRequestException('Файлы не переданы');
+    }
+
+    const existingIndices = await this.getGalleryIndices(gameId);
+    if (existingIndices.length + files.length > MAX_GALLERY) {
+      throw new BadRequestException(`Максимум ${MAX_GALLERY} фото в галерее`);
+    }
+
+    this.assertGalleryFiles(files);
+    const start = existingIndices.length;
+    for (let offset = 0; offset < files.length; offset += 1) {
+      await this.storeGalleryFile(gameId, start + offset, files[offset]);
+    }
+
+    await this.touchGame(gameId);
+    return this.getOwned(ownerId, gameId);
+  }
+
+  async deleteGalleryItem(ownerId: string, gameId: string, index: number) {
+    await this.requireOwnedGame(ownerId, gameId);
+    const existingIndices = await this.getGalleryIndices(gameId);
+    if (!existingIndices.includes(index)) {
+      throw new NotFoundException('Фото в галерее не найдено');
+    }
+
+    await this.mediaService.deleteCollection({
+      entityType: GAME_ENTITY_TYPE,
+      entityId: gameId,
+      collection: `${GALLERY_PREFIX}${index}`,
+    });
+    await this.reorderGalleryCollections(
+      gameId,
+      existingIndices.filter((item) => item !== index),
+    );
+    await this.touchGame(gameId);
+    return this.getOwned(ownerId, gameId);
+  }
+
+  async reorderGallery(ownerId: string, gameId: string, order: number[]) {
+    await this.requireOwnedGame(ownerId, gameId);
+    const existingIndices = await this.getGalleryIndices(gameId);
+    const requested = [...new Set(order)];
+    const isSameSet =
+      order.length === existingIndices.length &&
+      requested.length === existingIndices.length &&
+      requested.every((index) => existingIndices.includes(index));
+
+    if (!isSameSet) {
+      throw new BadRequestException('Передан неполный или некорректный порядок галереи');
+    }
+
+    await this.reorderGalleryCollections(gameId, order);
+    await this.touchGame(gameId);
     return this.getOwned(ownerId, gameId);
   }
 
@@ -1495,6 +1582,118 @@ export class GamesService {
     return urls.thumb ?? urls.small ?? urls.medium ?? urls.large ?? null;
   }
 
+  private assertGalleryFiles(files: Express.Multer.File[]) {
+    for (const file of files) {
+      if (file.size > GALLERY_MAX_FILE_BYTES) {
+        throw new BadRequestException('Файл слишком большой (максимум 5 МБ)');
+      }
+      const mime = (file.mimetype || '').toLowerCase();
+      if (
+        mime !== 'image/jpeg' &&
+        mime !== 'image/jpg' &&
+        mime !== 'image/png' &&
+        mime !== 'image/webp'
+      ) {
+        throw new BadRequestException('Допустимы только JPEG, PNG и WebP');
+      }
+    }
+  }
+
+  private async touchGame(gameId: string) {
+    await this.prisma.game.update({
+      where: { id: gameId },
+      data: { updatedAt: new Date() },
+    });
+  }
+
+  private async storeGalleryFile(
+    gameId: string,
+    index: number,
+    file: Express.Multer.File,
+  ) {
+    const variants = await this.imageProcessor.processImage(
+      file.buffer,
+      file.mimetype,
+      ['cardThumb', 'card', 'original'],
+    );
+
+    await this.mediaService.replaceCollection(
+      {
+        entityType: GAME_ENTITY_TYPE,
+        entityId: gameId,
+        collection: `${GALLERY_PREFIX}${index}`,
+      },
+      variants,
+    );
+  }
+
+  private async deleteGallery(gameId: string) {
+    for (let index = 0; index < MAX_GALLERY; index += 1) {
+      await this.mediaService.deleteCollection({
+        entityType: GAME_ENTITY_TYPE,
+        entityId: gameId,
+        collection: `${GALLERY_PREFIX}${index}`,
+      });
+    }
+  }
+
+  private async getGalleryIndices(gameId: string): Promise<number[]> {
+    const indices: number[] = [];
+    for (let index = 0; index < MAX_GALLERY; index += 1) {
+      const media = await this.mediaService.getCollection({
+        entityType: GAME_ENTITY_TYPE,
+        entityId: gameId,
+        collection: `${GALLERY_PREFIX}${index}`,
+      });
+      if (media.length > 0) {
+        indices.push(index);
+      }
+    }
+    return indices;
+  }
+
+  private async reorderGalleryCollections(gameId: string, order: number[]): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      for (const oldIndex of order) {
+        await tx.media.updateMany({
+          where: {
+            entityType: GAME_ENTITY_TYPE,
+            entityId: gameId,
+            collection: `${GALLERY_PREFIX}${oldIndex}`,
+          },
+          data: { collection: `gallery-staging-${oldIndex}` },
+        });
+      }
+      for (let nextIndex = 0; nextIndex < order.length; nextIndex += 1) {
+        await tx.media.updateMany({
+          where: {
+            entityType: GAME_ENTITY_TYPE,
+            entityId: gameId,
+            collection: `gallery-staging-${order[nextIndex]}`,
+          },
+          data: { collection: `${GALLERY_PREFIX}${nextIndex}` },
+        });
+      }
+    });
+  }
+
+  private async loadGalleryUrls(gameId: string): Promise<string[]> {
+    const galleryUrls: string[] = [];
+    for (let index = 0; index < MAX_GALLERY; index += 1) {
+      const media = await this.mediaService.getCollection({
+        entityType: GAME_ENTITY_TYPE,
+        entityId: gameId,
+        collection: `${GALLERY_PREFIX}${index}`,
+      });
+      if (!media.length) {
+        break;
+      }
+      const urls = await this.mediaService.getCollectionUrls(media);
+      galleryUrls.push(urls.card || urls.original || urls.cardThumb || '');
+    }
+    return galleryUrls.filter(Boolean);
+  }
+
   private async toListItem(
     game: GameRow,
     options?: {
@@ -1541,6 +1740,7 @@ export class GamesService {
         coverMedia.length > 0
           ? await this.mediaService.getCollectionUrls(coverMedia)
           : null,
+      galleryUrls: await this.loadGalleryUrls(game.id),
       playersCount: game._count.players,
       pendingApplicationsCount: options?.hidePendingCount ? 0 : game._count.applications,
       owner,
