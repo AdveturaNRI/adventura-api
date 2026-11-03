@@ -1347,6 +1347,7 @@ export async function setupAdmin(
             if ((request.method ?? 'get').toLowerCase() === 'post') {
               const p = request.payload ?? {};
               const platform = String(p.platform ?? ''), version = String(p.version ?? ''), file = String(p.file ?? '');
+              if (p.action === 'delete') return { deletion: await desktopUpdates.deleteRelease(platform, version) };
               if (p.action === 'multipart-start') return { upload: await desktopUpdates.startMultipart(platform, version, file, Number(p.size)) };
               if (p.action === 'multipart-finish') return { release: await desktopUpdates.finishMultipart(String(p.id ?? '')) };
               if (p.action === 'multipart-abort') { await desktopUpdates.abortMultipart(String(p.id ?? '')); return { ok: true }; }

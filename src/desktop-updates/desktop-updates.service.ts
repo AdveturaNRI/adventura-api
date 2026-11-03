@@ -190,9 +190,40 @@ export class DesktopUpdatesService {
   async setPolicy(platformValue: string, current: string, minimum: string) {
     const platform = platformOf(platformValue);
     if (compareVersions(minimum, current) > 0) throw new Error('Минимальная версия не может быть выше текущей');
-    if (!await this.getRelease(platform, current)) throw new Error('Текущий выпуск сначала нужно загрузить');
     const value = JSON.stringify({ current, minimum });
-    await this.prisma.appSetting.upsert({ where: { key: this.policyKey(platform) }, create: { key: this.policyKey(platform), value }, update: { value } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1::int AS locked FROM (SELECT pg_advisory_xact_lock(hashtext(${'desktop-policy-' + platform}))) AS acquired`;
+      if (!await tx.appSetting.findUnique({ where: { key: this.releaseKey(platform, current) } })) throw new Error('Текущий выпуск сначала нужно загрузить');
+      await tx.appSetting.upsert({ where: { key: this.policyKey(platform) }, create: { key: this.policyKey(platform), value }, update: { value } });
+    });
+  }
+
+  async deleteRelease(platformValue: string, version: string) {
+    const platform = platformOf(platformValue);
+    compareVersions(version, version);
+    const release = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1::int AS locked FROM (SELECT pg_advisory_xact_lock(hashtext(${'desktop-policy-' + platform}))) AS acquired`;
+      const policyRecord = await tx.appSetting.findUnique({ where: { key: this.policyKey(platform) } });
+      const policy = policyRecord ? JSON.parse(policyRecord.value) as Policy : null;
+      if (policy?.current === version) throw new Error('Нельзя удалить текущую версию. Сначала выберите другую текущую версию.');
+      const key = this.releaseKey(platform, version);
+      const record = await tx.appSetting.findUnique({ where: { key } });
+      if (!record) throw new NotFoundException('Версия не найдена');
+      const item = JSON.parse(record.value) as Release;
+      await tx.appSetting.delete({ where: { key } });
+      return item;
+    });
+    try {
+      await this.s3.deleteObject(release.key);
+      return { storageDeleted: true };
+    } catch {
+      try {
+        await this.prisma.appSetting.create({ data: { key: this.releaseKey(platform, version), value: JSON.stringify(release) } });
+        return { storageDeleted: false, restored: true };
+      } catch {
+        return { storageDeleted: false, restored: false };
+      }
+    }
   }
 
   async currentManifest(platform: Platform): Promise<string | null> {

@@ -67,6 +67,13 @@ export default function DesktopUpdatesAdmin() {
     finally { setProgress(''); }
     setFile(null);
   });
+  const deleteRelease = (release) => {
+    if (!window.confirm(`Удалить версию ${release.version} и её установщик? Откат на неё станет недоступен.`)) return;
+    void run(async () => {
+      const result = await request({ action: 'delete', platform, version: release.version });
+      if (!result.deletion?.storageDeleted) { await load(); throw new Error(result.deletion?.restored ? 'Не удалось удалить файл из хранилища. Версия сохранена, попробуйте ещё раз.' : 'Версия удалена из списка, но не удалось удалить файл из хранилища. Обратитесь к администратору.'); }
+    });
+  };
   return <Box variant="grey" p="xl">
     <Header>Версии десктопного приложения</Header>
     <Text>Загрузка сохраняет выпуск, но не делает его текущим. Для отката выберите ранее загруженную версию и сохраните политику.</Text>
@@ -78,6 +85,6 @@ export default function DesktopUpdatesAdmin() {
     <Box mt="xl"><Label>Текущая версия</Label><select value={current} onChange={(e) => setCurrent(e.target.value)}><option value="">Выберите выпуск</option>{state.releases.filter((r) => r.platform === platform).map((r) => <option key={r.version} value={r.version}>{r.version}</option>)}</select></Box>
     <Box mt="lg"><Label>Минимально допустимая версия</Label><Input value={minimum} placeholder="Например, 0.6.0" onChange={(e) => setMinimum(e.target.value)} /></Box>
     <Box mt="lg"><Button disabled={busy || !current || !minimum} onClick={() => run(() => request({ action: 'policy', platform, current, minimum }))}>Сохранить политику</Button></Box>
-    <Box mt="xl"><Header as="h3">Загруженные версии</Header>{state.releases.filter((r) => r.platform === platform).map((r) => <Text key={r.version}>{r.version} — {r.file} ({Math.ceil(r.size / 1048576)} МБ)</Text>)}</Box>
+    <Box mt="xl"><Header as="h3">Загруженные версии</Header>{state.releases.filter((r) => r.platform === platform).map((r) => <Box key={r.version} display="flex" alignItems="center" style={{ gap: 12, marginBottom: 8 }}><Text>{r.version} — {r.file} ({Math.ceil(r.size / 1048576)} МБ){state.policies?.[platform]?.current === r.version ? ' · текущая' : ''}</Text><Button disabled={busy || state.policies?.[platform]?.current === r.version} onClick={() => deleteRelease(r)}>Удалить</Button></Box>)}</Box>
   </Box>;
 }

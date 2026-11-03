@@ -5,7 +5,7 @@ import { Readable } from 'stream';
 
 describe('desktop release management', () => {
   const records = new Map<string, string>();
-  const prisma = { appSetting: {
+  const prisma: any = { $queryRaw: jest.fn(async () => []), $transaction: jest.fn(async (fn: any) => fn(prisma)), appSetting: {
     findUnique: jest.fn(async ({ where }: any) => records.has(where.key) ? { value: records.get(where.key) } : null),
     findMany: jest.fn(async ({ where }: any) => [...records].filter(([key]) => key.startsWith(where.key.startsWith)).map(([key, value]) => ({ key, value }))),
     create: jest.fn(async ({ data }: any) => { if (records.has(data.key)) throw new Error('duplicate'); records.set(data.key, data.value); }),
@@ -13,7 +13,7 @@ describe('desktop release management', () => {
     delete: jest.fn(async ({ where }: any) => { records.delete(where.key); }),
     upsert: jest.fn(async ({ where, create, update }: any) => { records.set(where.key, records.has(where.key) ? update.value : create.value); }),
   } };
-  const s3 = { getSignedNewObjectUploadUrl: jest.fn(async () => 'https://example.test/upload'), hashObject: jest.fn(async () => ({ size: 42, sha512: 'digest' })), putNewObjectStream: jest.fn(async (_key: string, body: Readable) => { for await (const _chunk of body) { /* consume */ } }), beginMultipart: jest.fn(async () => 'storage-id'), uploadMultipartPart: jest.fn(async () => 'etag'), completeMultipart: jest.fn(async () => undefined), abortMultipart: jest.fn(async () => undefined) };
+  const s3 = { getSignedNewObjectUploadUrl: jest.fn(async () => 'https://example.test/upload'), hashObject: jest.fn(async () => ({ size: 42, sha512: 'digest' })), putNewObjectStream: jest.fn(async (_key: string, body: Readable) => { for await (const _chunk of body) { /* consume */ } }), beginMultipart: jest.fn(async () => 'storage-id'), uploadMultipartPart: jest.fn(async () => 'etag'), completeMultipart: jest.fn(async () => undefined), abortMultipart: jest.fn(async () => undefined), deleteObject: jest.fn(async () => undefined) };
   const service = new DesktopUpdatesService(prisma as any, s3 as any);
   beforeEach(() => { records.clear(); jest.clearAllMocks(); });
 
@@ -70,5 +70,26 @@ describe('desktop release management', () => {
     expect((await service.list()).releases).toHaveLength(2);
     await expect(service.setPolicy('win32', '1.0.0', '1.1.0')).rejects.toThrow();
     await expect(service.prepareUpload('win32', '1.0.0', 'Adventura-Setup-1.0.0.exe')).rejects.toThrow();
+  });
+  it('protects the current release and deletes another release and its installer', async () => {
+    for (const version of ['0.6.12', '0.6.13']) {
+      const file = `Adventura-Setup-${version}.exe`;
+      const staged = await service.prepareUpload('win32', version, file);
+      await service.finishUpload('win32', version, file, staged.key);
+    }
+    await service.setPolicy('win32', '0.6.13', '0.6.12');
+    await expect(service.deleteRelease('win32', '0.6.13')).rejects.toThrow('Нельзя удалить текущую версию');
+    expect(s3.deleteObject).not.toHaveBeenCalled();
+    await expect(service.deleteRelease('win32', '0.6.12')).resolves.toEqual({ storageDeleted: true });
+    expect(s3.deleteObject).toHaveBeenCalledTimes(1);
+    expect(await service.getRelease('win32', '0.6.12')).toBeNull();
+  });
+  it('keeps the release available if deleting its file fails', async () => {
+    const file = 'Adventura-Setup-0.6.12.exe';
+    const staged = await service.prepareUpload('win32', '0.6.12', file);
+    await service.finishUpload('win32', '0.6.12', file, staged.key);
+    s3.deleteObject.mockRejectedValueOnce(new Error('storage unavailable') as never);
+    await expect(service.deleteRelease('win32', '0.6.12')).resolves.toEqual({ storageDeleted: false, restored: true });
+    expect(await service.getRelease('win32', '0.6.12')).not.toBeNull();
   });
 });
