@@ -8,6 +8,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'crypto';
+import { Readable } from 'stream';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -117,6 +118,13 @@ export class S3Service implements OnModuleInit {
     return getSignedUrl(this.publicClient, new PutObjectCommand({
       Bucket: this.bucket, Key: key, IfNoneMatch: '*', ContentType: 'application/octet-stream',
     }), { expiresIn: 900, signableHeaders: new Set(['if-none-match', 'content-type']) });
+  }
+
+  async putNewObjectStream(key: string, body: Readable, size: number): Promise<void> {
+    await this.client.send(new PutObjectCommand({
+      Bucket: this.bucket, Key: key, Body: body, ContentLength: size,
+      ContentType: 'application/octet-stream', IfNoneMatch: '*',
+    }));
   }
 
   async hashObject(key: string, maxSize: number): Promise<{ sha512: string; size: number }> {

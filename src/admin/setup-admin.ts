@@ -3254,6 +3254,41 @@ export async function setupAdmin(
   );
 
   const expressApp = app.getHttpAdapter().getInstance();
+  // Keep large installer bodies as streams; the normal AdminJS router parses
+  // form bodies before its page handlers and is unsuitable for these uploads.
+  expressApp.put(
+    '/admin/desktop-release-upload',
+    session({
+      store: sessionStore,
+      resave: false,
+      saveUninitialized: false,
+      secret: configService.getOrThrow<string>('ADMIN_COOKIE_SECRET'),
+      name: 'adventura_admin',
+      cookie: { httpOnly: true, sameSite: 'lax', secure: isProd, maxAge: 1000 * 60 * 60 * 24 * 7 },
+    }),
+    async (req: Request, res: Response) => {
+      const adminUser = (req.session as typeof req.session & { adminUser?: { role?: string } })?.adminUser;
+      if (adminUser?.role !== 'SUPERADMIN') { res.status(403).json({ error: 'Нет доступа' }); return; }
+      const origin = req.get('origin');
+      try {
+        if (!origin || new URL(origin).origin !== `${req.protocol}://${req.get('host')}`) {
+          res.status(403).json({ error: 'Недопустимый источник запроса' }); return;
+        }
+      } catch { res.status(403).json({ error: 'Недопустимый источник запроса' }); return; }
+      if (req.get('content-type') !== 'application/octet-stream') {
+        res.status(415).json({ error: 'Неверный тип файла' }); return;
+      }
+      try {
+        const release = await desktopUpdates.uploadStream(
+          String(req.query.platform ?? ''), String(req.query.version ?? ''),
+          String(req.query.file ?? ''), req, Number(req.get('content-length')),
+        );
+        res.json({ release });
+      } catch (error) {
+        if (!res.headersSent && !res.destroyed) res.status(400).json({ error: error instanceof Error ? error.message : 'Ошибка загрузки' });
+      }
+    },
+  );
   // Do NOT use res.sendFile for /tmp paths — Express often returns "Not Found"
   // even when the file exists (root restriction / Docker). Serve buffer instead.
   expressApp.get(

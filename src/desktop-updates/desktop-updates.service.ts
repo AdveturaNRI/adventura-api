@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { Readable, Transform } from 'stream';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../storage/s3.service';
 
@@ -59,6 +60,26 @@ export class DesktopUpdatesService {
     if (await this.getRelease(platform, version)) throw new Error('Эта версия уже загружена');
     const key = `desktop-updates/uploads/${platform}/${version}/${randomUUID()}`;
     return { key, url: await this.s3.getSignedNewObjectUploadUrl(key) };
+  }
+
+  async uploadStream(platformValue: string, version: string, file: string, body: Readable, size: number) {
+    const platform = platformOf(platformValue);
+    if (file !== releaseName(platform, version)) throw new Error('Имя файла не соответствует платформе и версии');
+    if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_SIZE) throw new Error('Недопустимый размер файла');
+    if (await this.getRelease(platform, version)) throw new Error('Эта версия уже загружена');
+    const key = `desktop-updates/uploads/${platform}/${version}/${randomUUID()}`;
+    let received = 0;
+    const limited = new Transform({ transform(chunk: Buffer, _encoding, callback) {
+      received += chunk.length;
+      if (received > size) callback(new Error('Размер файла превышает заявленный'));
+      else callback(null, chunk);
+    } });
+    body.on('error', (error) => limited.destroy(error));
+    body.on('aborted', () => limited.destroy(new Error('Загрузка прервана')));
+    body.pipe(limited);
+    await this.s3.putNewObjectStream(key, limited, size);
+    if (received !== size) throw new Error('Файл загружен не полностью');
+    return this.finishUpload(platform, version, file, key);
   }
 
   async finishUpload(platformValue: string, version: string, file: string, key: string) {

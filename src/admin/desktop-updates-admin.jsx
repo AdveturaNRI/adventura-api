@@ -41,11 +41,17 @@ export default function DesktopUpdatesAdmin() {
     const match = pattern.exec(file.name);
     if (!match) throw new Error('Имя файла должно соответствовать выбранной платформе и версии X.Y.Z');
     if (file.size > 1024 * 1024 * 1024) throw new Error('Максимальный размер файла — 1 ГБ');
-    const fields = { platform, version: match[1], file: file.name };
-    const { upload: target } = await request({ action: 'prepare', ...fields });
-    const result = await fetch(target.url, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream', 'If-None-Match': '*' }, body: file });
-    if (!result.ok) throw new Error(`Не удалось загрузить файл в хранилище: ${result.status}`);
-    await request({ action: 'finish', ...fields, key: target.key });
+    const params = new URLSearchParams({ platform, version: match[1], file: file.name });
+    let result;
+    try {
+      result = await fetch(`/admin/desktop-release-upload?${params}`, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: file, credentials: 'same-origin' });
+    } catch {
+      throw new Error('Не удалось передать файл на сервер. Проверьте соединение и повторите попытку.');
+    }
+    if (!result.ok) {
+      const details = await result.json().catch(() => ({}));
+      throw new Error(details.error || `Не удалось загрузить файл: HTTP ${result.status}`);
+    }
     setFile(null);
   });
   return <Box variant="grey" p="xl">
