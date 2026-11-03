@@ -7,6 +7,7 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { createHash } from 'crypto';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -81,7 +82,7 @@ export class S3Service implements OnModuleInit {
             CORSRules: [
               {
                 AllowedHeaders: ['*'],
-                AllowedMethods: ['GET', 'HEAD'],
+                AllowedMethods: ['GET', 'HEAD', 'PUT'],
                 AllowedOrigins: ['*'],
                 ExposeHeaders: ['Content-Length', 'Content-Type', 'ETag'],
                 MaxAgeSeconds: 86_400,
@@ -110,6 +111,28 @@ export class S3Service implements OnModuleInit {
         expiresIn: expiresInSec ?? this.signedUrlExpiresSec,
       },
     );
+  }
+
+  async getSignedNewObjectUploadUrl(key: string): Promise<string> {
+    return getSignedUrl(this.publicClient, new PutObjectCommand({
+      Bucket: this.bucket, Key: key, IfNoneMatch: '*', ContentType: 'application/octet-stream',
+    }), { expiresIn: 900, signableHeaders: new Set(['if-none-match', 'content-type']) });
+  }
+
+  async hashObject(key: string, maxSize: number): Promise<{ sha512: string; size: number }> {
+    const object = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    if (!object.Body || !object.ContentLength || object.ContentLength > maxSize) {
+      throw new Error('Файл отсутствует, пуст или превышает допустимый размер');
+    }
+    const hash = createHash('sha512');
+    let size = 0;
+    for await (const chunk of object.Body as AsyncIterable<Uint8Array>) {
+      size += chunk.byteLength;
+      if (size > maxSize) throw new Error('Файл превышает допустимый размер');
+      hash.update(chunk);
+    }
+    if (size !== object.ContentLength) throw new Error('Файл загружен не полностью');
+    return { sha512: hash.digest('base64'), size };
   }
 
   async getObjectBuffer(key: string): Promise<Buffer> {

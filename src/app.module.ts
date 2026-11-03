@@ -23,6 +23,7 @@ import { RealtimeModule } from './realtime/realtime.module';
 import { ReferenceModule } from './reference/reference.module';
 import { RewardsModule } from './rewards/rewards.module';
 import { StorageModule } from './storage/storage.module';
+import { DesktopUpdatesModule } from './desktop-updates/desktop-updates.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -31,6 +32,7 @@ import { UsersModule } from './users/users.module';
       isGlobal: true,
     }),
     StorageModule,
+    DesktopUpdatesModule,
     PrismaModule,
     MailModule,
     MarketingModule,

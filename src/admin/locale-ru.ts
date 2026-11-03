@@ -87,6 +87,7 @@ export const ADMIN_LOCALE_RU = {
     vkAdsPixelSettings: 'VK Ads Pixel',
     welcomeLanding: 'Приветствие и «О проекте»',
     notificationSounds: 'Звуки уведомлений',
+    desktopUpdates: 'Версии приложения',
     broadcasts: 'Массовые оповещения',
     siteAnnouncements: 'Новостные объявления',
     pushSettings: 'Web Push / FCM',

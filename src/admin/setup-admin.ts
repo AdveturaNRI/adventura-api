@@ -20,6 +20,7 @@ import { loadEsmModule } from '../common/load-esm-module';
 import { MarketingLandingsService } from '../marketing/landings/marketing-landings.service';
 import { BroadcastService } from '../notifications/broadcast.service';
 import { NotificationSoundsService } from '../notification-sounds/notification-sounds.service';
+import { DesktopUpdatesService } from '../desktop-updates/desktop-updates.service';
 import { PushSubscriptionsService } from '../push-subscriptions/push-subscriptions.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import { RealtimeEmitter } from '../realtime/realtime.emitter';
@@ -1233,6 +1234,9 @@ export async function setupAdmin(
     'NotificationSoundsAdmin',
     resolveAdminComponent('notification-sounds-admin'),
   );
+  const desktopUpdatesComponent = componentLoader.add(
+    'DesktopUpdatesAdmin', resolveAdminComponent('desktop-updates-admin'),
+  );
   const broadcastsComponent = componentLoader.add(
     'BroadcastsAdmin',
     resolveAdminComponent('broadcasts-admin'),
@@ -1278,6 +1282,7 @@ export async function setupAdmin(
   const analyticsNavigation = { name: 'Аналитика', icon: 'Activity' };
   const appSettings = app.get(AppSettingsService);
   const notificationSounds = app.get(NotificationSoundsService);
+  const desktopUpdates = app.get(DesktopUpdatesService);
   const broadcasts = app.get(BroadcastService);
   const siteAnnouncements = app.get(AnnouncementsService);
   const pushSubscriptions = app.get(PushSubscriptionsService);
@@ -1310,6 +1315,25 @@ export async function setupAdmin(
         buildAnalyticsDashboardData(prisma, configService, realtime),
     },
     pages: {
+      desktopUpdates: {
+        icon: 'Download',
+        component: desktopUpdatesComponent,
+        handler: async (request: { method?: string; payload?: Record<string, unknown> }) => {
+          try {
+            if ((request.method ?? 'get').toLowerCase() === 'post') {
+              const p = request.payload ?? {};
+              const platform = String(p.platform ?? ''), version = String(p.version ?? ''), file = String(p.file ?? '');
+              if (p.action === 'prepare') return { upload: await desktopUpdates.prepareUpload(platform, version, file) };
+              if (p.action === 'finish') await desktopUpdates.finishUpload(platform, version, file, String(p.key ?? ''));
+              else if (p.action === 'policy') await desktopUpdates.setPolicy(platform, String(p.current ?? ''), String(p.minimum ?? ''));
+              else throw new Error('Неизвестное действие');
+            }
+            return await desktopUpdates.list();
+          } catch (error) {
+            return { error: error instanceof Error ? error.message : 'Ошибка управления версиями' };
+          }
+        },
+      },
       grantRewards: {
         icon: 'Gift',
         component: GrantRewardsComponent,
@@ -3105,6 +3129,7 @@ export async function setupAdmin(
     'VkAdsPixelSettings',
     'WelcomeLandingSettings',
     'NotificationSoundsAdmin',
+    'DesktopUpdatesAdmin',
     'BroadcastsAdmin',
     'SiteAnnouncementsAdmin',
     'PushSettings',

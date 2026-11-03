@@ -62,6 +62,7 @@ export const ADMIN_NAVIGATION_SECTIONS: Record<string, AdminSection> = {
 export const ADMIN_PAGE_SECTIONS: Record<string, AdminSection> = {
   grantRewards: 'rewards',
   notificationSounds: 'dictionaries',
+  desktopUpdates: 'access',
   marketingLandings: 'marketing',
   marketingCampaigns: 'marketing',
   marketingAnalytics: 'marketing',
