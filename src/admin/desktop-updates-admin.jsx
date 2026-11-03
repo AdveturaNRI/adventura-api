@@ -23,6 +23,7 @@ export default function DesktopUpdatesAdmin() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [progress, setProgress] = useState('');
   const load = async () => setState(await request());
   useEffect(() => { load().catch((e) => setError(e.message)); }, []);
   useEffect(() => {
@@ -41,17 +42,29 @@ export default function DesktopUpdatesAdmin() {
     const match = pattern.exec(file.name);
     if (!match) throw new Error('Имя файла должно соответствовать выбранной платформе и версии X.Y.Z');
     if (file.size > 1024 * 1024 * 1024) throw new Error('Максимальный размер файла — 1 ГБ');
-    const params = new URLSearchParams({ platform, version: match[1], file: file.name });
-    let result;
+    const { upload: target } = await request({ action: 'multipart-start', platform, version: match[1], file: file.name, size: String(file.size) });
     try {
-      result = await fetch(`/admin/desktop-release-upload?${params}`, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: file, credentials: 'same-origin' });
-    } catch {
-      throw new Error('Не удалось передать файл на сервер. Проверьте соединение и повторите попытку.');
+      const total = Math.ceil(file.size / target.partSize);
+      for (let part = 1; part <= total; part++) {
+        const params = new URLSearchParams({ action: 'part', id: target.id, part: String(part) });
+        const chunk = file.slice((part - 1) * target.partSize, part * target.partSize);
+        let result;
+        try { result = await fetch(`/admin/desktop-release-upload?${params}`, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: chunk, credentials: 'same-origin' }); }
+        catch { throw new Error(`Не удалось передать часть ${part} из ${total}. Проверьте соединение.`); }
+        if (!result.ok) {
+          const details = await result.json().catch(() => ({}));
+          throw new Error(details.error || `Ошибка загрузки части ${part}: HTTP ${result.status}`);
+        }
+        setProgress(`Загружено ${Math.round(part / total * 100)}% · часть ${part} из ${total}`);
+      }
+    } catch (error) {
+      setProgress('');
+      await request({ action: 'multipart-abort', id: target.id }).catch(() => undefined);
+      throw error;
     }
-    if (!result.ok) {
-      const details = await result.json().catch(() => ({}));
-      throw new Error(details.error || `Не удалось загрузить файл: HTTP ${result.status}`);
-    }
+    setProgress('Проверяем целостность файла…');
+    try { await request({ action: 'multipart-finish', id: target.id }); }
+    finally { setProgress(''); }
     setFile(null);
   });
   return <Box variant="grey" p="xl">
@@ -59,6 +72,7 @@ export default function DesktopUpdatesAdmin() {
     <Text>Загрузка сохраняет выпуск, но не делает его текущим. Для отката выберите ранее загруженную версию и сохраните политику.</Text>
     {error && <MessageBox message={error} variant="danger" />}
     {message && <MessageBox message={message} variant="success" />}
+    {progress && <Text>{progress}</Text>}
     <Box mt="lg"><Label>Платформа</Label><select value={platform} onChange={(e) => setPlatform(e.target.value)}><option value="win32">Windows</option><option value="linux">Linux AppImage</option></select></Box>
     <Box mt="lg"><Label>Установщик (до 1 ГБ)</Label><input type="file" accept={platform === 'win32' ? '.exe' : '.AppImage'} onChange={(e) => setFile(e.target.files?.[0] || null)} /><Button disabled={busy || !file} onClick={upload}>Загрузить версию</Button></Box>
     <Box mt="xl"><Label>Текущая версия</Label><select value={current} onChange={(e) => setCurrent(e.target.value)}><option value="">Выберите выпуск</option>{state.releases.filter((r) => r.platform === platform).map((r) => <option key={r.version} value={r.version}>{r.version}</option>)}</select></Box>

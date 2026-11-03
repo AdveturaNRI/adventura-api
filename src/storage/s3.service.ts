@@ -1,5 +1,9 @@
 import {
   DeleteObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
   PutBucketCorsCommand,
@@ -125,6 +129,26 @@ export class S3Service implements OnModuleInit {
       Bucket: this.bucket, Key: key, Body: body, ContentLength: size,
       ContentType: 'application/octet-stream', IfNoneMatch: '*',
     }));
+  }
+
+  async beginMultipart(key: string): Promise<string> {
+    const result = await this.client.send(new CreateMultipartUploadCommand({ Bucket: this.bucket, Key: key, ContentType: 'application/octet-stream' }));
+    if (!result.UploadId) throw new Error('Хранилище не выдало идентификатор загрузки');
+    return result.UploadId;
+  }
+
+  async uploadMultipartPart(key: string, uploadId: string, number: number, body: Buffer): Promise<string> {
+    const result = await this.client.send(new UploadPartCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId, PartNumber: number, Body: body, ContentLength: body.length }));
+    if (!result.ETag) throw new Error('Хранилище не подтвердило часть файла');
+    return result.ETag;
+  }
+
+  async completeMultipart(key: string, uploadId: string, parts: { PartNumber: number; ETag: string }[]): Promise<void> {
+    await this.client.send(new CompleteMultipartUploadCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId, MultipartUpload: { Parts: parts } }));
+  }
+
+  async abortMultipart(key: string, uploadId: string): Promise<void> {
+    await this.client.send(new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId }));
   }
 
   async hashObject(key: string, maxSize: number): Promise<{ sha512: string; size: number }> {

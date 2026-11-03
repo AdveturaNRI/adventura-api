@@ -482,6 +482,10 @@ const AnalyticsDashboard = () => {
 
   const kpis = data.kpis ?? {};
   const live = data.live ?? {};
+  const clients = data.desktopAnalytics?.clients ?? {};
+  const distribution = data.desktopAnalytics?.distribution ?? {};
+  const clientTotal = (clients.webOnly || 0) + (clients.desktopOnly || 0) + (clients.both || 0);
+  const clientValue = (count) => clientTotal ? `${count || 0} · ${((count || 0) * 100 / clientTotal).toFixed(1)}%` : 'Нет данных';
   const onlineHint = kpis.onlineWindowMinutes
     ? `lastSeen ≤ ${kpis.onlineWindowMinutes} мин`
     : 'lastSeen недавно';
@@ -521,6 +525,20 @@ const AnalyticsDashboard = () => {
           hint={onlineHint}
           color="#22c55e"
         />
+      </Box>
+
+      <Header.H3 marginBottom="default">Приложение и веб</Header.H3>
+      <Text color="grey60" marginBottom="lg" fontSize={13}>
+        Уникальные авторизованные пользователи за последние 30 дней, по отмеченным сеансам. Доли исключают гостей и суммируются до 100%; данные собираются с момента внедрения.
+      </Text>
+      <Box display="flex" flexWrap="wrap" style={{ gap: 16 }} marginBottom="xl">
+        <MetricCard label="Только веб" value={clientValue(clients.webOnly)} />
+        <MetricCard label="Только приложение" value={clientValue(clients.desktopOnly)} />
+        <MetricCard label="Веб и приложение" value={clientValue(clients.both)} />
+        <MetricCard label="Скачивания установщика" value={distribution.downloads ?? 0} hint="Запросы через API · всё время" />
+        <MetricCard label="Загрузки обновления" value={distribution.updateDownloads ?? 0} hint="Запросы через автообновление · всё время" />
+        <MetricCard label="Установленные обновления" value={distribution.updates ?? 0} hint="Новая версия успешно запущена · всё время" />
+        <MetricCard label="Выполненные откаты" value={distribution.rollbacks ?? 0} hint="Старая версия успешно запущена · всё время" />
       </Box>
 
       <Header.H3 marginBottom="default">Сейчас · голос и чаты</Header.H3>

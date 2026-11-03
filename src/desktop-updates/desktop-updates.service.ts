@@ -9,6 +9,8 @@ type Release = { platform: Platform; version: string; file: string; key: string;
 type Policy = { current: string; minimum: string };
 const PREFIX = 'desktop.release.';
 const MAX_SIZE = 1024 * 1024 * 1024;
+const PART_SIZE = 5 * 1024 * 1024;
+type MultipartState = { platform: Platform; version: string; file: string; size: number; key: string; uploadId: string; parts: { PartNumber: number; ETag: string }[]; completed?: boolean };
 
 export function compareVersions(a: string, b: string): number {
   const valid = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
@@ -36,6 +38,28 @@ export class DesktopUpdatesService {
   private releaseKey(platform: Platform, version: string) { return `${PREFIX}${platform}.${version}`; }
   private policyKey(platform: Platform) { return `desktop.policy.${platform}`; }
 
+  async recordDownload(file: string, kind: string) {
+    await this.prisma.analyticsEvent.create({ data: {
+      name: 'desktop_installer_download', props: { file, kind },
+    } });
+  }
+
+  async recordCompletedUpdate(id: string, from: string, to: string, platform: string) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) throw new Error('Некорректный идентификатор');
+    platformOf(platform);
+    const direction = compareVersions(from, to);
+    if (direction === 0) throw new Error('Версии совпадают');
+    const key = `desktop.completed-update.${id}`;
+    try {
+      await this.prisma.$transaction([
+        this.prisma.appSetting.create({ data: { key, value: to } }),
+        this.prisma.analyticsEvent.create({ data: { name: 'desktop_update_completed', appVersion: to, props: { from, to, platform, kind: direction < 0 ? 'update' : 'rollback' } } }),
+      ]);
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'P2002') throw error;
+    }
+  }
+
   async list() {
     const records = await this.prisma.appSetting.findMany({ where: { key: { startsWith: PREFIX } } });
     const releases = records.map((record) => JSON.parse(record.value) as Release)
@@ -62,6 +86,73 @@ export class DesktopUpdatesService {
     return { key, url: await this.s3.getSignedNewObjectUploadUrl(key) };
   }
 
+  private multipartKey(id: string) {
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('Некорректный идентификатор загрузки');
+    return `desktop.upload.${id}`;
+  }
+
+  private async multipartState(id: string): Promise<MultipartState> {
+    const record = await this.prisma.appSetting.findUnique({ where: { key: this.multipartKey(id) } });
+    if (!record) throw new Error('Загрузка не найдена');
+    return JSON.parse(record.value) as MultipartState;
+  }
+
+  async startMultipart(platformValue: string, version: string, file: string, size: number) {
+    const platform = platformOf(platformValue);
+    if (file !== releaseName(platform, version)) throw new Error('Имя файла не соответствует платформе и версии');
+    if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_SIZE) throw new Error('Недопустимый размер файла');
+    if (await this.getRelease(platform, version)) throw new Error('Эта версия уже загружена');
+    const id = randomUUID();
+    const key = `desktop-updates/uploads/${platform}/${version}/${randomUUID()}`;
+    const uploadId = await this.s3.beginMultipart(key);
+    const state: MultipartState = { platform, version, file, size, key, uploadId, parts: [] };
+    try { await this.prisma.appSetting.create({ data: { key: this.multipartKey(id), value: JSON.stringify(state) } }); }
+    catch (error) { await this.s3.abortMultipart(key, uploadId).catch(() => undefined); throw error; }
+    return { id, partSize: PART_SIZE };
+  }
+
+  async uploadPart(id: string, number: number, body: Readable, size: number) {
+    const state = await this.multipartState(id);
+    const count = Math.ceil(state.size / PART_SIZE);
+    if (state.completed || !Number.isInteger(number) || number < 1 || number > count) throw new Error('Некорректный номер части');
+    const expected = number === count ? state.size - PART_SIZE * (count - 1) : PART_SIZE;
+    if (size !== expected) throw new Error('Некорректный размер части');
+    if (number <= state.parts.length) { body.resume(); return; }
+    if (number !== state.parts.length + 1) throw new Error('Части должны загружаться по порядку');
+    const chunks: Buffer[] = [];
+    let received = 0;
+    for await (const chunk of body) {
+      received += chunk.length;
+      if (received > expected) throw new Error('Часть файла слишком большая');
+      chunks.push(Buffer.from(chunk));
+    }
+    if (received !== expected) throw new Error('Часть файла получена не полностью');
+    const etag = await this.s3.uploadMultipartPart(state.key, state.uploadId, number, Buffer.concat(chunks));
+    state.parts.push({ PartNumber: number, ETag: etag });
+    await this.prisma.appSetting.update({ where: { key: this.multipartKey(id) }, data: { value: JSON.stringify(state) } });
+  }
+
+  async finishMultipart(id: string) {
+    const state = await this.multipartState(id);
+    const existing = await this.getRelease(state.platform, state.version);
+    if (existing) return existing;
+    if (state.parts.length !== Math.ceil(state.size / PART_SIZE)) throw new Error('Загружены не все части файла');
+    if (!state.completed) {
+      await this.s3.completeMultipart(state.key, state.uploadId, state.parts);
+      state.completed = true;
+      await this.prisma.appSetting.update({ where: { key: this.multipartKey(id) }, data: { value: JSON.stringify(state) } });
+    }
+    const release = await this.finishUpload(state.platform, state.version, state.file, state.key, state.size);
+    await this.prisma.appSetting.delete({ where: { key: this.multipartKey(id) } }).catch(() => undefined);
+    return release;
+  }
+
+  async abortMultipart(id: string) {
+    const state = await this.multipartState(id);
+    if (!state.completed) await this.s3.abortMultipart(state.key, state.uploadId);
+    await this.prisma.appSetting.delete({ where: { key: this.multipartKey(id) } });
+  }
+
   async uploadStream(platformValue: string, version: string, file: string, body: Readable, size: number) {
     const platform = platformOf(platformValue);
     if (file !== releaseName(platform, version)) throw new Error('Имя файла не соответствует платформе и версии');
@@ -82,7 +173,7 @@ export class DesktopUpdatesService {
     return this.finishUpload(platform, version, file, key);
   }
 
-  async finishUpload(platformValue: string, version: string, file: string, key: string) {
+  async finishUpload(platformValue: string, version: string, file: string, key: string, expectedSize?: number) {
     const platform = platformOf(platformValue);
     const expectedPrefix = `desktop-updates/uploads/${platform}/${version}/`;
     if (file !== releaseName(platform, version) || !key.startsWith(expectedPrefix) || !/^[0-9a-f-]{36}$/.test(key.slice(expectedPrefix.length))) {
@@ -90,6 +181,7 @@ export class DesktopUpdatesService {
     }
     if (await this.getRelease(platform, version)) throw new Error('Эта версия уже загружена');
     const { sha512, size } = await this.s3.hashObject(key, MAX_SIZE);
+    if (expectedSize !== undefined && size !== expectedSize) throw new Error('Размер загруженного файла не совпадает');
     const release: Release = { platform, version, file, key, sha512, size, createdAt: new Date().toISOString() };
     await this.prisma.appSetting.create({ data: { key: this.releaseKey(platform, version), value: JSON.stringify(release) } });
     return release;

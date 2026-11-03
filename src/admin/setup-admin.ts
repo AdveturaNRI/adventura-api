@@ -986,6 +986,29 @@ async function buildAnalyticsDashboardData(
   const onlineSince = new Date(now.getTime() - ONLINE_WINDOW_MS);
   const chatHotSince = new Date(now.getTime() - 15 * 60 * 1000);
 
+  const [clientRows, distributionRows] = await Promise.all([
+    prisma.$queryRaw<{ webOnly: number; desktopOnly: number; both: number }[]>`
+      WITH clients AS (
+        SELECT e."userId", bool_or(e.props->>'clientType' = 'web') AS web,
+          bool_or(e.props->>'clientType' = 'desktop') AS desktop
+        FROM analytics_events e JOIN "User" u ON u.id = e."userId"
+        WHERE e.name = 'user_session_started' AND e."occurredAt" >= ${monthAgo}
+          AND e.props->>'clientType' IN ('web', 'desktop') AND u."isGuest" = false
+        GROUP BY e."userId"
+      )
+      SELECT count(*) FILTER (WHERE web AND NOT desktop)::int AS "webOnly",
+        count(*) FILTER (WHERE desktop AND NOT web)::int AS "desktopOnly",
+        count(*) FILTER (WHERE web AND desktop)::int AS both FROM clients
+    `,
+    prisma.$queryRaw<{ downloads: number; updateDownloads: number; updates: number; rollbacks: number }[]>`
+      SELECT count(*) FILTER (WHERE name = 'desktop_installer_download' AND props->>'kind' = 'direct')::int AS downloads,
+        count(*) FILTER (WHERE name = 'desktop_installer_download' AND props->>'kind' = 'update')::int AS "updateDownloads",
+        count(*) FILTER (WHERE name = 'desktop_update_completed' AND props->>'kind' = 'update')::int AS updates,
+        count(*) FILTER (WHERE name = 'desktop_update_completed' AND props->>'kind' = 'rollback')::int AS rollbacks
+      FROM analytics_events WHERE name IN ('desktop_installer_download', 'desktop_update_completed')
+    `,
+  ]);
+
   const earliest = await prisma.analyticsEvent.findFirst({
     orderBy: { occurredAt: 'asc' },
     select: { occurredAt: true },
@@ -1084,6 +1107,7 @@ async function buildAnalyticsDashboardData(
   ]);
 
   return {
+    desktopAnalytics: { clients: clientRows[0], distribution: distributionRows[0] },
     kpis: {
       usersTotal,
       profilesActive,
@@ -1323,6 +1347,9 @@ export async function setupAdmin(
             if ((request.method ?? 'get').toLowerCase() === 'post') {
               const p = request.payload ?? {};
               const platform = String(p.platform ?? ''), version = String(p.version ?? ''), file = String(p.file ?? '');
+              if (p.action === 'multipart-start') return { upload: await desktopUpdates.startMultipart(platform, version, file, Number(p.size)) };
+              if (p.action === 'multipart-finish') return { release: await desktopUpdates.finishMultipart(String(p.id ?? '')) };
+              if (p.action === 'multipart-abort') { await desktopUpdates.abortMultipart(String(p.id ?? '')); return { ok: true }; }
               if (p.action === 'prepare') return { upload: await desktopUpdates.prepareUpload(platform, version, file) };
               if (p.action === 'finish') await desktopUpdates.finishUpload(platform, version, file, String(p.key ?? ''));
               else if (p.action === 'policy') await desktopUpdates.setPolicy(platform, String(p.current ?? ''), String(p.minimum ?? ''));
@@ -3279,6 +3306,11 @@ export async function setupAdmin(
         res.status(415).json({ error: 'Неверный тип файла' }); return;
       }
       try {
+        if (req.query.action === 'part') {
+          await desktopUpdates.uploadPart(String(req.query.id ?? ''), Number(req.query.part), req, Number(req.get('content-length')));
+          res.json({ ok: true });
+          return;
+        }
         const release = await desktopUpdates.uploadStream(
           String(req.query.platform ?? ''), String(req.query.version ?? ''),
           String(req.query.file ?? ''), req, Number(req.get('content-length')),
